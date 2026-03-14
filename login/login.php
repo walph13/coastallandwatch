@@ -1,0 +1,61 @@
+<?php
+session_start(); // This is crucial for keeping users logged in
+include 'db_connect.php';
+
+if (isset($_POST['login'])) {
+    $username = $_POST['username'];
+    $password = $_POST['password'];
+
+    // Securely search for the user
+    $stmt = $conn->prepare("SELECT user_id, password, role, account_status FROM users WHERE username = ?");
+    $stmt->bind_param("s", $username);
+    $stmt->execute();
+    $result = $stmt->get_result();
+
+    if ($result->num_rows > 0) {
+        $row = $result->fetch_assoc();
+        
+        // Verify the encrypted password
+        if (password_verify($password, $row['password'])) {
+            
+            // Check if the Secretary has approved them
+            if ($row['account_status'] === 'Pending') {
+                echo "<script>alert('Login failed: Your account is still pending approval by the Barangay Secretary.');</script>";
+            } elseif ($row['account_status'] === 'Suspended') {
+                echo "<script>alert('Login failed: Your account has been suspended.');</script>";
+            } else {
+                // Login Success! Save their ID and Role in the Session
+                $_SESSION['user_id'] = $row['user_id'];
+                $_SESSION['role'] = $row['role'];
+                
+                // Redirect them based on who they are
+                if ($row['role'] === 'Admin') {
+                    header("Location: admin_dashboard.php");
+                } else {
+                    header("Location: resident_dashboard.php");
+                }
+                exit();
+            }
+        } else {
+            echo "<script>alert('Incorrect password!');</script>";
+        }
+    } else {
+        echo "<script>alert('Username not found!');</script>";
+    }
+}
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Login - Coastal & Land Watch</title>
+</head>
+<body>
+    <h2>System Login</h2>
+    <form action="login.php" method="POST">
+        <input type="text" name="username" placeholder="Username" required><br><br>
+        <input type="password" name="password" placeholder="Password" required><br><br>
+        <button type="submit" name="login">Login</button>
+    </form>
+</body>
+</html>
