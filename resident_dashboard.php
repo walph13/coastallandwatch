@@ -11,30 +11,40 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Resident') {
 $resident_id = $_SESSION['user_id'];
 
 // BACKEND LOGIC: Handle the Waste Report Submission
+// BACKEND LOGIC: Handle the Waste Report Submission
 if (isset($_POST['submit_report'])) {
     $description = $_POST['description'];
     $lat = $_POST['latitude'];
     $lng = $_POST['longitude'];
     
-    // Handle the "Before" Photo Upload
+    // Set up upload directory
     $target_dir = "uploads/reports/";
     if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
     
     $file_name = time() . "_" . basename($_FILES["photo_before"]["name"]);
     $target_file = $target_dir . $file_name;
 
-    if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
-        // Insert into the waste_reports table
-        $sql = "INSERT INTO waste_reports (resident_id, latitude, longitude, description, before_photo_path, status) 
-                VALUES (?, ?, ?, ?, ?, 'Pending')";
-        
-        $stmt = $conn->prepare($sql);
-        $stmt->bind_param("iddss", $resident_id, $lat, $lng, $description, $file_name);
-        
-        if ($stmt->execute()) {
-            echo "<script>alert('Waste report submitted successfully!');</script>";
-        } else {
-            echo "<script>alert('Error submitting report.');</script>";
+    // SECURITY UPGRADE: Check the file extension
+    $allowed_extensions = array("jpg", "jpeg", "png");
+    $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+
+    if (!in_array($file_extension, $allowed_extensions)) {
+        // Block the file and refresh
+        echo "<script>alert('Security Alert: Only JPG, JPEG, and PNG image files are allowed!'); window.location.href='resident_dashboard.php';</script>";
+    } else {
+        // If the file is a valid image, move it and save to database
+        if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
+            $sql = "INSERT INTO waste_reports (resident_id, latitude, longitude, description, before_photo_path, status) 
+                    VALUES (?, ?, ?, ?, ?, 'Pending')";
+            
+            $stmt = $conn->prepare($sql);
+            $stmt->bind_param("iddss", $resident_id, $lat, $lng, $description, $file_name);
+            
+            if ($stmt->execute()) {
+                echo "<script>alert('Waste report submitted successfully!'); window.location.href='resident_dashboard.php';</script>";
+            } else {
+                echo "<script>alert('Error submitting report.');</script>";
+            }
         }
     }
 }
