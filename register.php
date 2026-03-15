@@ -43,6 +43,8 @@ if (isset($_POST['register'])) {
         <label>Upload Valid ID:</label>
         <input type="file" name="id_photo" required><br><br>
         <button type="submit" name="register">Register</button>
+        <br><br>
+        <a href="login.php"><button type="button">Go back to Login</button></a>
     </form>
 </body>
 </html>
