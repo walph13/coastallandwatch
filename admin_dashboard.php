@@ -30,6 +30,40 @@ if (isset($_GET['approve_id'])) {
     <a href="logout.php">Logout</a>
     <hr>
 
+    <?php
+    // Query 1: Count Pending Reports
+    $pending_query = $conn->query("SELECT COUNT(*) as total FROM waste_reports WHERE status = 'Pending'");
+    $pending_count = $pending_query->fetch_assoc()['total'];
+
+    // Query 2: Count Cleaned Reports (Using your exact database vocabulary!)
+    $cleaned_query = $conn->query("SELECT COUNT(*) as total FROM waste_reports WHERE status = 'Cleaned'");
+    $cleaned_count = $cleaned_query->fetch_assoc()['total'];
+
+    // Query 3: Count Active Residents
+    // Query 3: Count All Residents
+    $resident_query = $conn->query("SELECT COUNT(*) as total FROM users WHERE role = 'Resident'");  
+    $resident_count = $resident_query->fetch_assoc()['total'];
+    ?>
+
+    <h3>Barangay Tanza System Overview</h3>
+    <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+        <div style="border: 1px solid #ccc; padding: 15px; text-align: center; background-color: #f9f9f9; width: 200px; border-radius: 8px;">
+            <h4 style="margin: 0; color: #555;">🗑️ Pending Reports</h4>
+            <h1 style="color: #d9534f; margin: 10px 0 0 0; font-size: 40px;"><?php echo $pending_count; ?></h1>
+        </div>
+        
+        <div style="border: 1px solid #ccc; padding: 15px; text-align: center; background-color: #f9f9f9; width: 200px; border-radius: 8px;">
+            <h4 style="margin: 0; color: #555;">✅ Cleaned Areas</h4>
+            <h1 style="color: #5cb85c; margin: 10px 0 0 0; font-size: 40px;"><?php echo $cleaned_count; ?></h1>
+        </div>
+
+        <div style="border: 1px solid #ccc; padding: 15px; text-align: center; background-color: #f9f9f9; width: 200px; border-radius: 8px;">
+            <h4 style="margin: 0; color: #555;">👥 Active Residents</h4>
+            <h1 style="color: #0275d8; margin: 10px 0 0 0; font-size: 40px;"><?php echo $resident_count; ?></h1>
+        </div>
+    </div>
+    <hr>
+
     <h3>Pending Resident Approvals</h3>
     <table border="1" cellpadding="10">
         <tr>
@@ -40,19 +74,31 @@ if (isset($_GET['approve_id'])) {
             <th>Action</th>
         </tr>
         <?php
-        $pending_users = $conn->query("SELECT * FROM users WHERE role = 'Resident' AND account_status = 'Pending'");
+        // Fetch users who are Residents AND have a 'Pending' account status
+        $pending_query = "SELECT * FROM users WHERE role = 'Resident' AND account_status = 'Pending'";
+        $pending_users = $conn->query($pending_query);
+
         if ($pending_users->num_rows > 0) {
-            while ($row = $pending_users->fetch_assoc()) {
+            while ($user = $pending_users->fetch_assoc()) {
                 echo "<tr>";
-                echo "<td>" . $row['full_name'] . "</td>";
-                echo "<td>" . $row['username'] . "</td>";
-                echo "<td>" . $row['phone_number'] . "</td>";
-                echo "<td><a href='uploads/ids/" . $row['id_photo_path'] . "' target='_blank'>View ID</a></td>"; 
-                echo "<td><a href='admin_dashboard.php?approve_id=" . $row['user_id'] . "'>Approve</a></td>";
+                echo "<td>" . $user['full_name'] . "</td>";
+                echo "<td>" . $user['username'] . "</td>";
+                echo "<td>" . $user['phone_number'] . "</td>";
+                
+                // Link to view their uploaded ID photo
+                // Make sure your ID upload folder name matches here! (e.g., 'uploads/ids/' or just 'uploads/')
+                echo "<td><a href='uploads/ids/" . $user['id_photo_path'] . "' target='_blank'>View ID 🪪</a></td>";
+                
+                // The Action buttons (we will build the backend for these next!)
+                // Make sure your primary key column is 'user_id' based on your previous screenshot
+                echo "<td>";
+                echo "<a href='approve_resident.php?id=" . $user['user_id'] . "&action=approve' style='color: green; font-weight: bold;'>[Approve]</a> <br><br>";
+                echo "<a href='approve_resident.php?id=" . $user['user_id'] . "&action=reject' style='color: red;'>[Reject]</a>";
+                echo "</td>";
                 echo "</tr>";
             }
         } else {
-            echo "<tr><td colspan='5'>No pending residents.</td></tr>";
+            echo "<tr><td colspan='5' style='text-align: center;'>No pending residents.</td></tr>";
         }
         ?>
     </table>
