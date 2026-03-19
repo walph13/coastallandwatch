@@ -18,12 +18,31 @@ if (isset($_GET['approve_id'])) {
         echo "<script>alert('Resident Approved Successfully!'); window.location.href='admin_dashboard.php';</script>";
     }
 }
+// BACKEND LOGIC: Handle the Basura-Alert Submission
+if (isset($_POST['send_basura_alert'])) {
+    $purok = $_POST['purok_area'];
+    $message = $_POST['alert_message'];
+    $admin_id = $_SESSION['user_id']; // Grabs the logged-in Secretary's ID
+
+    // Insert the message into the database
+    $alert_sql = "INSERT INTO basura_alerts (purok_area, admin_id, message) VALUES (?, ?, ?)";
+    $stmt = $conn->prepare($alert_sql);
+    $stmt->bind_param("sis", $purok, $admin_id, $message);
+    
+    if ($stmt->execute()) {
+        echo "<script>alert('Basura-Alert successfully sent to " . $purok . "!'); window.location.href='admin_dashboard.php';</script>";
+    } else {
+        echo "<script>alert('Database error: Failed to send alert.');</script>";
+    }
+}
 ?>
 
 <!DOCTYPE html>
 <html>
 <head>
     <title>Admin Dashboard - Barangay Coastal & Land Watch</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <h2>Welcome, Barangay Secretary!</h2>
@@ -62,6 +81,39 @@ if (isset($_GET['approve_id'])) {
             <h1 style="color: #0275d8; margin: 10px 0 0 0; font-size: 40px;"><?php echo $resident_count; ?></h1>
         </div>
     </div>
+
+    <div style="background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 15px; margin-bottom: 20px; border-radius: 5px;">
+    <h3 style="margin-top: 0; color: #856404;">📢 Dispatch Basura-Alert</h3>
+    <p style="margin-bottom: 10px; color: #856404;">Send a notification to residents that the garbage truck is on its way!</p>
+    
+    <form method="POST" action="">
+        <label style="font-weight: bold;">Select Area:</label>
+        <select name="purok_area" required style="padding: 5px; margin-right: 15px; border-radius: 4px;">
+            <option value="Purok Uno">Purok Uno</option>
+            <option value="Purok Dos">Purok Dos</option>
+            <option value="Purok Tres">Purok Tres</option>
+            <option value="All Areas">All Areas</option>
+        </select>
+        
+        <label style="font-weight: bold;">Message:</label>
+        <input type="text" name="alert_message" value="The garbage truck is near your area! Please bring out your trash." style="width: 350px; padding: 5px; margin-right: 15px; border-radius: 4px;" required>
+        
+        <button type="submit" name="send_basura_alert" style="background-color: #ffc107; border: none; padding: 7px 15px; font-weight: bold; cursor: pointer; border-radius: 4px; color: #333;">Send Alert 🚚</button>
+    </form>
+</div>
+
+    <br>
+        <h3>Barangay Tanza GIS Master Map 📍</h3>
+        <div id="masterMap" style="height: 400px; width: 100%; border-radius: 8px; border: 2px solid #ccc; margin-bottom: 20px;"></div>
+
+        <?php
+        // BACKEND LOGIC: Fetch all GPS coordinates from the database
+        $map_query = $conn->query("SELECT description, latitude, longitude, status FROM waste_reports WHERE latitude IS NOT NULL AND longitude IS NOT NULL");
+        $map_data = [];
+        while($row = $map_query->fetch_assoc()) {
+            $map_data[] = $row;
+        }
+        ?>
     <hr>
 
     <h3>Pending Resident Approvals</h3>
@@ -105,10 +157,14 @@ if (isset($_GET['approve_id'])) {
 
     <hr>
 
+    <div style="display: flex; justify-content: space-between; align-items: center;">
     <h3>Recent Waste Reports in Barangay Tanza</h3>
+    <a href="print_report.php" target="_blank" style="background-color: #28a745; color: white; padding: 8px 15px; text-decoration: none; border-radius: 5px; font-weight: bold; box-shadow: 0px 4px 6px rgba(0,0,0,0.1);">🖨️ Print Monthly Report</a>
+</div>
     <table border="1" cellpadding="10">
         <tr>
             <th>Reporter Name</th>
+            <th>Date Reported</th>
             <th>Description</th>
             <th>Location</th>
             <th>Photo Evidence</th>
@@ -127,8 +183,13 @@ if (isset($_GET['approve_id'])) {
             while ($row = $reports->fetch_assoc()) {
                 echo "<tr>";
                 echo "<td>" . $row['full_name'] . "</td>";
-                echo "<td>" . $row['description'] . "</td>";
+        
+                // FORMAT THE DATE AND ADD IT TO THE TABLE
+                $formatted_date = date("M d, Y h:i A", strtotime($row['created_at']));
+                echo "<td>" . $formatted_date . "</td>";
                 
+                echo "<td>" . $row['description'] . "</td>";
+              
                 // Capstone Flex: Turn the Lat/Lng into a Google Maps Link
                 // Safe check for coordinates and proper Google Maps Link
                 $lat = isset($row['latitude']) ? $row['latitude'] : '0';
@@ -160,5 +221,46 @@ if (isset($_GET['approve_id'])) {
         }
         ?>
     </table>
+
+    <script>
+    // Initialize the map
+    var map = L.map('masterMap').setView([12.8797, 121.7740], 5); // Default center
+
+    // Load the street map tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    // Grab the database coordinates we fetched in PHP
+    var locations = <?php echo json_encode($map_data); ?>;
+    
+    if (locations.length > 0) {
+        var bounds = []; // This will help the map auto-zoom to fit all pins
+        
+        locations.forEach(function(loc) {
+            // Red for Pending, Green for Cleaned
+            var pinColor = (loc.status === 'Pending') ? 'red' : 'green'; 
+            
+            // Draw the colored circle on the map
+            var circle = L.circleMarker([loc.latitude, loc.longitude], {
+                color: pinColor,
+                fillColor: pinColor,
+                fillOpacity: 0.8,
+                radius: 8
+            }).addTo(map);
+
+            // Add a pop-up when the Admin clicks the pin
+            circle.bindPopup("<b>Status: " + loc.status + "</b><br>Location: " + loc.description);
+            
+            // Save coordinates to adjust the camera zoom later
+            bounds.push([loc.latitude, loc.longitude]);
+        });
+        
+        // Auto-zoom the camera so every single pin fits perfectly on the screen!
+        map.fitBounds(bounds);
+    }
+</script>
+
 </body>
 </html>
