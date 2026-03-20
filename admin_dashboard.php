@@ -28,8 +28,14 @@ if (isset($_POST['send_basura_alert'])) {
     }
 }
 
-// BACKEND: Fetch all GPS coordinates for the map
-$map_query = $conn->query("SELECT description, latitude, longitude, status FROM waste_reports WHERE latitude IS NOT NULL AND longitude IS NOT NULL");
+// BACKEND: Fetch all data for the GIS Map (Coordinates, Photos, Names, Dates)
+$map_query = $conn->query("
+    SELECT w.report_id, w.description, w.latitude, w.longitude, w.status, 
+           w.before_photo_path, w.created_at, u.full_name 
+    FROM waste_reports w 
+    JOIN users u ON w.resident_id = u.user_id 
+    WHERE w.latitude IS NOT NULL AND w.longitude IS NOT NULL
+");
 $map_data = [];
 while($row = $map_query->fetch_assoc()) {
     $map_data[] = $row;
@@ -206,7 +212,21 @@ while($row = $map_query->fetch_assoc()) {
 
         <div id="section-reports" class="content-section">
             <div style="background:#fff; padding: 20px; border-radius: 5px; border: 2px solid #ddd;">
-                <h3 style="margin-top: 0;">Recent Waste Reports</h3>
+                
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
+                    <h3 style="margin: 0;">Recent Waste Reports</h3>
+                    
+                    <div style="display: flex; gap: 15px; align-items: center;">
+                        <input type="text" id="searchInput" placeholder="🔍 Search Name or Description..." style="padding: 10px; width: 280px; border: 1px solid #ccc; border-radius: 5px;">
+                        
+                        <div>
+                            <button id="filter-All" class="filter-btn" style="background-color: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;" onclick="filterTable('All')">All</button>
+                            <button id="filter-Pending" class="filter-btn" style="background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;" onclick="filterTable('Pending')">🔴 Pending</button>
+                            <button id="filter-Cleaned" class="filter-btn" style="background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;" onclick="filterTable('Cleaned')">✅ Cleaned</button>
+                        </div>
+                    </div>
+                </div>
+
                 <table border="1" cellpadding="10" style="width: 100%; text-align: left; border-collapse: collapse; border: 1px solid #ddd;">
                     <tr style="background-color:#eee;">
                         <th>Reporter</th>
@@ -217,42 +237,45 @@ while($row = $map_query->fetch_assoc()) {
                         <th>Status</th>
                         <th>Action</th>
                     </tr>
-                    <?php
-                    $reports_query = $conn->query("SELECT waste_reports.*, users.full_name FROM waste_reports JOIN users ON waste_reports.resident_id = users.user_id ORDER BY waste_reports.created_at DESC");
-                    
-                    if($reports_query->num_rows > 0) {
-                        while($row = $reports_query->fetch_assoc()) {
-                            echo "<tr>";
-                            echo "<td>" . $row['full_name'] . "</td>";
-                            echo "<td>" . date("M d, Y", strtotime($row['created_at'])) . "</td>";
-                            echo "<td>" . $row['description'] . "</td>";
-                            
-                            $lat = isset($row['latitude']) ? $row['latitude'] : '0';
-                            $lng = isset($row['longitude']) ? $row['longitude'] : '0';
-                            echo "<td><a href='https://www.google.com/maps?q=" . $lat . "," . $lng . "' target='_blank' style='color:#007bff; text-decoration:none; font-weight:bold;'>Map 📍</a></td>";
-                            
-                            echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' style='color:#6c757d; text-decoration:none;'>Before</a> ";
-                            if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
-                                echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' style='color:#28a745; text-decoration:none;'>After ✅</a>";
+                    <tbody id="reportsTableBody">
+                        <?php
+                        $reports_query = $conn->query("SELECT waste_reports.*, users.full_name FROM waste_reports JOIN users ON waste_reports.resident_id = users.user_id ORDER BY waste_reports.created_at DESC");
+                        
+                        if($reports_query->num_rows > 0) {
+                            while($row = $reports_query->fetch_assoc()) {
+                                // NEW: Added class 'report-row' and 'data-status' to let JavaScript filter it
+                                echo "<tr class='report-row' data-status='" . $row['status'] . "'>";
+                                echo "<td class='reporter-name'>" . $row['full_name'] . "</td>";
+                                echo "<td>" . date("M d, Y", strtotime($row['created_at'])) . "</td>";
+                                echo "<td class='report-desc'>" . $row['description'] . "</td>";
+                                
+                                $lat = isset($row['latitude']) ? $row['latitude'] : '0';
+                                $lng = isset($row['longitude']) ? $row['longitude'] : '0';
+                                echo "<td><a href='https://www.google.com/maps?q=" . $lat . "," . $lng . "' target='_blank' style='color:#007bff; text-decoration:none; font-weight:bold;'>Map 📍</a></td>";
+                                
+                                echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' style='color:#6c757d; text-decoration:none;'>Before</a> ";
+                                if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
+                                    echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' style='color:#28a745; text-decoration:none;'>After ✅</a>";
+                                }
+                                echo "</td>";
+                                
+                                $color = ($row['status'] == 'Pending') ? 'red' : 'green';
+                                echo "<td style='color:$color; font-weight:bold;'>" . $row['status'] . "</td>";
+                                
+                                echo "<td>";
+                                if ($row['status'] == 'Pending') {
+                                    echo "<a href='resolve_report.php?id=" . $row['report_id'] . "' style='background:#28a745; color:#fff; padding:5px 10px; text-decoration:none; border-radius:3px;'>Resolve</a>";
+                                } else {
+                                    echo "<span style='color:#aaa;'>Resolved</span>";
+                                }
+                                echo "</td>";
+                                echo "</tr>";
                             }
-                            echo "</td>";
-                            
-                            $color = ($row['status'] == 'Pending') ? 'red' : 'green';
-                            echo "<td style='color:$color; font-weight:bold;'>" . $row['status'] . "</td>";
-                            
-                            echo "<td>";
-                            if ($row['status'] == 'Pending') {
-                                echo "<a href='resolve_report.php?id=" . $row['report_id'] . "' style='background:#28a745; color:#fff; padding:5px 10px; text-decoration:none; border-radius:3px;'>Resolve</a>";
-                            } else {
-                                echo "<span style='color:#aaa;'>Resolved</span>";
-                            }
-                            echo "</td>";
-                            echo "</tr>";
+                        } else {
+                            echo "<tr id='no-data-row'><td colspan='7' style='text-align:center;'>No waste reports found.</td></tr>";
                         }
-                    } else {
-                        echo "<tr><td colspan='7'>No waste reports found.</td></tr>";
-                    }
-                    ?>
+                        ?>
+                    </tbody>
                 </table>
             </div>
         </div>
@@ -265,7 +288,8 @@ while($row = $map_query->fetch_assoc()) {
             </div>
         </div>
 
-    </div> <script>
+    </div> 
+    <script>
         // 1. Tab Switching Logic
         // NEW CODE: This reads the VIP pass in the URL and opens the right tab
         window.onload = function() {
@@ -316,17 +340,97 @@ while($row = $map_query->fetch_assoc()) {
             attribution: '© OpenStreetMap'
         }).addTo(map);
 
-        var locations = <?php echo json_encode($map_data); ?>;
-        locations.forEach(function(loc) {
-            // Make Pending pins red, Cleaned pins green
-            var pinColor = (loc.status === 'Pending') ? 'red' : 'green'; 
-            
-            var circle = L.circleMarker([loc.latitude, loc.longitude], {
-                color: pinColor, fillColor: pinColor, fillOpacity: 0.8, radius: 8
-            }).addTo(map);
-            
-            circle.bindPopup("<b>Status: " + loc.status + "</b><br>" + loc.description);
+        // Define Custom Colored Pins
+        var redPin = new L.Icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
         });
+
+        var greenPin = new L.Icon({
+            iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+            shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+            iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
+        });
+
+        // Load the data from PHP
+        var locations = <?php echo json_encode($map_data); ?>;
+        
+        locations.forEach(function(loc) {
+            // 1. Check status to choose the pin color
+            var currentIcon = (loc.status === 'Pending') ? redPin : greenPin; 
+            
+            // 2. Drop the pin on the map
+            var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(map);
+            
+            // 3. Format the date to look nice (e.g., "Mar 20, 2026")
+            var dateObj = new Date(loc.created_at);
+            var dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+
+            // 4. Design the Hover Card (HTML inside the tooltip)
+            var hoverCard = `
+                <div style="text-align:center; min-width: 160px; padding: 5px;">
+                    <img src="uploads/reports/${loc.before_photo_path}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 5px; margin-bottom: 8px; border: 1px solid #ccc;">
+                    <div style="font-size: 14px; color: ${(loc.status === 'Pending') ? '#dc3545' : '#28a745'}; font-weight: bold; margin-bottom: 5px;">
+                        ${(loc.status === 'Pending') ? '🔴 Pending Report' : '✅ Cleaned Area'}
+                    </div>
+                    <div style="font-size: 12px; text-align: left; line-height: 1.4;">
+                        <b>Reporter:</b> ${loc.full_name}<br>
+                        <b>Date:</b> ${dateStr}<br>
+                        <b>Desc:</b> <span style="color:#555;">"${loc.description}"</span>
+                    </div>
+                </div>
+            `;
+            
+            // 5. Attach the Hover Card to the Pin
+            marker.bindTooltip(hoverCard, {
+                direction: 'top',   // Makes it pop up above the pin
+                opacity: 1,         // Removes transparency
+                className: 'custom-hover-card'
+            });
+        });
+        // 3. Live Search and Filter Logic for Waste Reports
+        let currentStatusFilter = 'All';
+
+        // Listen for typing in the search bar
+        document.getElementById('searchInput').addEventListener('keyup', applyFilters);
+
+        // Function called when a filter button is clicked
+        function filterTable(status) {
+            currentStatusFilter = status;
+            
+            // Reset all buttons to gray
+            document.getElementById('filter-All').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
+            document.getElementById('filter-Pending').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
+            document.getElementById('filter-Cleaned').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
+            
+            // Highlight the clicked button in blue
+            document.getElementById('filter-' + status).style.cssText = "background-color: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
+            
+            applyFilters();
+        }
+
+        // The main function that hides/shows rows
+        function applyFilters() {
+            let searchText = document.getElementById('searchInput').value.toLowerCase();
+            let rows = document.querySelectorAll('.report-row');
+            
+            rows.forEach(row => {
+                let reporterName = row.querySelector('.reporter-name').innerText.toLowerCase();
+                let description = row.querySelector('.report-desc').innerText.toLowerCase();
+                let rowStatus = row.getAttribute('data-status');
+                
+                // Check if row matches search text AND matches the button filter
+                let matchesSearch = reporterName.includes(searchText) || description.includes(searchText);
+                let matchesStatus = (currentStatusFilter === 'All') || (rowStatus === currentStatusFilter);
+                
+                if (matchesSearch && matchesStatus) {
+                    row.style.display = ''; // Show row
+                } else {
+                    row.style.display = 'none'; // Hide row
+                }
+            });
+        }
     </script>
 </body>
 </html>
