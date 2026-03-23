@@ -2,40 +2,53 @@
 session_start();
 include 'db_connect.php';
 
-// BACKEND LOGIC: Handle the Login Process
+$login_error = '';
+$login_warning = '';
+
 if (isset($_POST['login'])) {
-    $username = $_POST['username'];
+    $username = trim($_POST['username']);
     $password = $_POST['password'];
 
+    // 1. Find the user in the database
     $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
     $result = $stmt->get_result();
 
-    if ($result->num_rows > 0) {
+    if ($result->num_rows === 1) {
         $user = $result->fetch_assoc();
-        
-        // Verify the encrypted password
-        if (password_verify($password, $user['password'])) {
-            // Check if resident is approved
-            if ($user['role'] === 'Resident' && $user['account_status'] === 'Pending') {
-                echo "<script>alert('Your account is still pending approval by the Barangay. Please wait.');</script>";
-            } else {
+
+        // 2. Verify Password (Supports both new Bcrypt hashes and old plain-text test accounts)
+        $is_password_correct = false;
+        if (password_verify($password, $user['password']) || $password === $user['password']) {
+            $is_password_correct = true;
+        }
+
+        if ($is_password_correct) {
+            
+            // 3. THE GATEKEEPER: Check Account Status
+            if ($user['role'] === 'Resident' && $user['account_status'] === 'Rejected') {
+                $login_error = "❌ Your registration was rejected. Please contact the Barangay Hall.";
+            } 
+            else {
+                // Account is either Approved OR Pending (Both get to log in now!)
+                // Admin accounts also get through here.
                 $_SESSION['user_id'] = $user['user_id'];
                 $_SESSION['role'] = $user['role'];
-                
-                if ($user['role'] == 'Admin') {
-                    header("Location: admin_dashboard.php");
+
+                if ($user['role'] === 'Admin') {
+                    header("Location: admin_dashboard.php?view=dashboard");
                 } else {
                     header("Location: resident_dashboard.php");
                 }
                 exit();
             }
+
         } else {
-            echo "<script>alert('Incorrect password!');</script>";
+            $login_error = "❌ Incorrect password.";
         }
     } else {
-        echo "<script>alert('User not found!');</script>";
+        $login_error = "❌ Username not found.";
     }
 }
 ?>
@@ -48,43 +61,44 @@ if (isset($_POST['login'])) {
     <title>Login - Coastal & Land Watch</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { 
-            background-color: #e9ecef; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            height: 100vh; 
-            margin: 0;
-        }
-        .login-card {
-            max-width: 400px;
-            width: 100%;
-            border-radius: 10px;
-            box-shadow: 0px 10px 30px rgba(0,0,0,0.1);
-            border: none;
-        }
+        body { background-color: #f4f7f6; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: Arial, sans-serif; }
+        .login-card { width: 100%; max-width: 400px; padding: 30px; border-radius: 12px; box-shadow: 0px 10px 30px rgba(0,0,0,0.1); border: none; }
+        .login-title { color: #28a745; font-weight: bold; text-align: center; margin-bottom: 25px; }
+        .form-control:focus { border-color: #28a745; box-shadow: 0 0 8px rgba(40, 167, 69, 0.4); }
     </style>
 </head>
 <body>
 
-    <div class="card login-card p-4">
-        <div class="text-center mb-4">
-            <h2 class="fw-bold text-success mb-1">🌊 Coastal Watch</h2>
-            <p class="text-muted small">Barangay Tanza Waste Reporting System</p>
-        </div>
+    <div class="card login-card">
+        <h2 class="login-title">System Login</h2>
 
-        <form method="POST" action="login.php">
+        <?php if(!empty($login_warning)): ?>
+            <div class="alert alert-warning shadow-sm fw-bold text-dark text-center" style="font-size: 14px;">
+                <?php echo $login_warning; ?>
+            </div>
+        <?php endif; ?>
+
+        <?php if(!empty($login_error)): ?>
+            <div class="alert alert-danger shadow-sm fw-bold text-center" style="font-size: 14px;">
+                <?php echo $login_error; ?>
+            </div>
+        <?php endif; ?>
+
+        <form method="POST" action="">
             <div class="mb-3">
-                <label class="form-label fw-bold">Username</label>
-                <input type="text" name="username" class="form-control" required placeholder="Enter your username">
-            </div>
-            
-            <div class="mb-4">
-                <label class="form-label fw-bold">Password</label>
-                <input type="password" name="password" class="form-control" required placeholder="••••••••">
+                <label class="form-label fw-bold text-muted">Username</label>
+                <input type="text" name="username" class="form-control py-2" required placeholder="Enter your username">
             </div>
 
-            <button type="submit" name="login" class="btn btn-success w-100 fw-bold py-2 mb-3 shadow-sm">Log In</button>
+            <div class="mb-4">
+                <label class="form-label fw-bold text-muted">Password</label>
+                <div class="input-group">
+                    <input type="password" id="pwdInput" name="password" class="form-control py-2" required placeholder="••••••••">
+                    <button class="btn btn-outline-secondary" type="button" onclick="togglePwd()"><span id="pwdIcon">👁️</span></button>
+                </div>
+            </div>
+
+            <button type="submit" name="login" class="btn btn-success w-100 fw-bold py-2 shadow-sm mb-3">Log In</button>
         </form>
 
         <div class="text-center mt-2">
@@ -93,6 +107,18 @@ if (isset($_POST['login'])) {
         </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        function togglePwd() {
+            const pwd = document.getElementById("pwdInput");
+            const icon = document.getElementById("pwdIcon");
+            if (pwd.type === "password") {
+                pwd.type = "text";
+                icon.innerText = "🙈";
+            } else {
+                pwd.type = "password";
+                icon.innerText = "👁️";
+            }
+        }
+    </script>
 </body>
 </html>
