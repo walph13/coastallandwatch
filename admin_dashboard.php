@@ -156,15 +156,17 @@ while($row = $map_query->fetch_assoc()) {
             <a href="approve_resident.php">👥 Approve Residents</a>
             <a href="print_report.php" target="_blank">🖨️ Print Monthly Report</a>
             <a href="barangay_info.php">ℹ️ System Information</a>
-            <a href="logout.php" id="logout-link">🚪 Logout</a>
+            <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out of the system?');">🚪 Logout</a>
         </div>
     </div>
 
     <div id="main-content">
         <div id="dashboard-header">
-            <h2 id="page-title" style="margin:0;">🌊 Coastal & Land Watch</h2>
-            <div style="font-size:14px; color:#777;">Date: <?php echo date('M d, Y'); ?></div>
-        </div>
+    <h2 id="page-title" style="margin:0;">🌊 Coastal & Land Watch</h2>
+    <div style="font-size:14px; color:#777; font-weight:bold;">
+        📅 <?php echo date('M d, Y'); ?> | 🕒 <span id="liveClock"></span>
+    </div>
+</div>
 
         <div id="section-dashboard" class="content-section" style="display: block;">
             
@@ -431,6 +433,11 @@ while($row = $map_query->fetch_assoc()) {
                 }
             });
         }
+        // NEW FEATURE: Live ticking clock
+        setInterval(function() {
+            var now = new Date();
+            document.getElementById('liveClock').innerText = now.toLocaleTimeString();
+        }, 1000);
     </script>
 </body>
 </html>
