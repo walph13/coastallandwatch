@@ -8,34 +8,73 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Admin') {
     exit();
 }
 
-// BACKEND: Get current admin data for the sidebar profile
 $admin_id = $_SESSION['user_id'];
 $admin_data = $conn->query("SELECT full_name FROM users WHERE user_id = $admin_id")->fetch_assoc();
 
-// BACKEND: Handle the update form
-$update_success = false;
-$error_msg = '';
+// Ensure there is at least one row in the settings table
+$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+if ($check_info->num_rows == 0) {
+    $conn->query("INSERT INTO barangay_information (barangay_name) VALUES ('Barangay Tanza')");
+    $check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+}
+$info = $check_info->fetch_assoc();
+$info_id = $info['id']; // Assuming the primary key is 'id'
 
+$update_success = false;
+$update_error = '';
+
+// BACKEND: Handle Form Submission
 if (isset($_POST['update_info'])) {
     $b_name = $_POST['barangay_name'];
-    $m_name = $_POST['municipality'];
-    $p_name = $_POST['province'];
-    $c_name = $_POST['captain_name'];
-    $email = $_POST['contact_email'];
-
-    $sql = "UPDATE barangay_information SET barangay_name=?, municipality=?, province=?, captain_name=?, contact_email=? WHERE id=1";
-    $stmt = $conn->prepare($sql);
-    $stmt->bind_param("sssss", $b_name, $m_name, $p_name, $c_name, $email);
+    $captain = $_POST['captain_name'];
+    $contact = $_POST['contact_number'];
+    $address = $_POST['full_address'];
+    $zip = $_POST['zip_code'];
+    $region = $_POST['region'];
     
-    if ($stmt->execute()) {
-        $update_success = true;
-    } else {
-        $error_msg = 'Database error: Failed to update information.';
+    // Default to existing logo if no new one is uploaded
+    $logo_file_name = $info['logo_path']; 
+
+    // Handle Logo Upload if a new file is selected
+    if (!empty($_FILES["barangay_logo"]["name"])) {
+        $target_dir = "uploads/logo/";
+        if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
+        
+        $new_logo = time() . "_" . basename($_FILES["barangay_logo"]["name"]);
+        $target_file = $target_dir . $new_logo;
+        $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+
+        if (in_array($file_extension, array("jpg", "jpeg", "png"))) {
+            if (move_uploaded_file($_FILES["barangay_logo"]["tmp_name"], $target_file)) {
+                $logo_file_name = $new_logo; // Update variable to new file name
+            }
+        } else {
+            $update_error = "Only JPG and PNG files are allowed for the logo.";
+        }
+    }
+
+    if (empty($update_error)) {
+        $update_sql = "UPDATE barangay_information SET 
+                        barangay_name = ?, 
+                        captain_name = ?, 
+                        contact_number = ?, 
+                        full_address = ?, 
+                        zip_code = ?, 
+                        region = ?, 
+                        logo_path = ? 
+                       WHERE id = ?";
+        $stmt = $conn->prepare($update_sql);
+        $stmt->bind_param("sssssssi", $b_name, $captain, $contact, $address, $zip, $region, $logo_file_name, $info_id);
+        
+        if ($stmt->execute()) {
+            $update_success = true;
+            // Refresh info data after successful update
+            $info = $conn->query("SELECT * FROM barangay_information LIMIT 1")->fetch_assoc();
+        } else {
+            $update_error = "Failed to update information in the database.";
+        }
     }
 }
-
-// FETCH: Get the current info to fill the form
-$b_info = $conn->query("SELECT * FROM barangay_information WHERE id=1")->fetch_assoc();
 ?>
 
 <!DOCTYPE html>
@@ -44,112 +83,141 @@ $b_info = $conn->query("SELECT * FROM barangay_information WHERE id=1")->fetch_a
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>System Information - Barangay Tanza</title>
-    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    
     <style>
-        /* BASE STYLES & SIDEBAR (Matches Admin Dashboard perfectly) */
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background-color: #f4f7f6; }
+        body { font-family: Arial, sans-serif; background-color: #f4f7f6; display: flex; height: 100vh; margin: 0; }
         
+        /* SIDEBAR STYLES */
         #sidebar { width: 260px; background-color: #343a40; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 2px 0px 10px rgba(0,0,0,0.1); position: fixed; height: 100%; z-index: 1000; }
         #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4b545c; margin-bottom: 20px; }
         #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; }
         #admin-name { font-weight: bold; font-size: 16px; }
-        
-        #nav-menu a { color: #c2c7d0; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; cursor: pointer; }
+        #nav-menu a { color: #c2c7d0; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; }
         #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #28a745; font-weight: bold; }
         #nav-menu #logout-link { color: #dc3545; margin-top: auto; margin-bottom: 20px; }
-
+        
+        /* MAIN CONTENT STYLES */
         #main-content { margin-left: 260px; flex: 1; padding: 30px; overflow-y: auto; }
-        #dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }
+        
+        .form-card { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-top: 5px solid #28a745; max-width: 900px; margin: 0 auto; }
+        .form-label { font-weight: bold; color: #555; }
+        #logoPreview { width: 120px; height: 120px; object-fit: cover; border-radius: 50%; border: 3px solid #ddd; display: block; margin: 10px 0; }
     </style>
 </head>
 <body>
 
     <div id="sidebar">
         <div id="profile-header">
-            <img src="uploads/default_profile.png" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
-            <div id="admin-name"><?php echo htmlspecialchars($admin_data['full_name']); ?></div>
-            <div style="font-size:12px; color:#aaa; margin-top:3px;">Barangay Secretary</div>
+            <?php 
+            // Dynamically load the logo and name we fetched at the top of the page!
+            $sidebar_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'uploads/default_profile.png';
+            $sidebar_bname = !empty($info['barangay_name']) ? 'Brgy. ' . $info['barangay_name'] : 'Barangay System';
+            ?>
+            
+            <img src="<?php echo $sidebar_logo; ?>" id="profile-pic" alt="Barangay Logo" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'" style="background-color: #fff; padding: 2px;">
+            
+            <div id="admin-name" style="font-size: 18px; margin-bottom: 2px;"><?php echo htmlspecialchars($sidebar_bname); ?></div>
+            <div style="font-size:11px; color:#aaa;">Admin: <?php echo htmlspecialchars($admin_data['full_name']); ?></div>
         </div>
-
         <div id="nav-menu">
             <a href="admin_dashboard.php?view=dashboard">📊 Main Dashboard</a>
             <a href="admin_dashboard.php?view=reports">🗑️ Waste Reports</a>
             <a href="admin_dashboard.php?view=map">📍 GIS Master Map</a>
-            
             <a href="approve_resident.php">👥 Approve Residents</a>
             <a href="print_report.php" target="_blank">🖨️ Print Monthly Report</a>
             <a href="barangay_info.php" class="active">ℹ️ System Information</a>
-            <a href="logout.php" id="logout-link">🚪 Logout</a>
+            <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out?');">🚪 Logout</a>
         </div>
     </div>
 
     <div id="main-content">
-        <div id="dashboard-header">
+        <div class="page-header">
             <h2 style="margin:0;">ℹ️ System Information</h2>
-            <div style="font-size:14px; color:#777;">Manage official barangay details</div>
+            <span class="text-muted small">Manage official barangay details</span>
         </div>
 
         <?php if($update_success): ?>
-            <div class="alert alert-success alert-dismissible fade show shadow-sm" role="alert">
-                <strong>Success!</strong> Barangay information has been updated.
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+            <div class="alert alert-success shadow-sm fw-bold text-center mx-auto" style="max-width: 900px;">
+                ✅ Barangay Information Successfully Updated!
             </div>
-        <?php elseif(!empty($error_msg)): ?>
-            <div class="alert alert-danger alert-dismissible fade show shadow-sm" role="alert">
-                <strong>Error!</strong> <?php echo $error_msg; ?>
-                <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+        <?php elseif(!empty($update_error)): ?>
+            <div class="alert alert-danger shadow-sm fw-bold text-center mx-auto" style="max-width: 900px;">
+                ❌ <?php echo $update_error; ?>
             </div>
         <?php endif; ?>
 
-        <div class="card shadow-sm border-0" style="max-width: 800px;">
-            <div class="card-header bg-dark text-white fw-bold py-3">
-                Update Barangay Details
-            </div>
-            <div class="card-body bg-white p-4">
-                <p class="text-muted small mb-4">This information is used to generate official headers on your printable reports and system alerts.</p>
+        <div class="form-card">
+            <form method="POST" action="" enctype="multipart/form-data">
                 
-                <form method="POST" action="">
-                    
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold">Barangay Name</label>
-                            <input type="text" name="barangay_name" class="form-control" value="<?php echo htmlspecialchars($b_info['barangay_name']); ?>" required>
+                <div class="row mb-4">
+                    <div class="col-md-4 text-center border-end">
+                        <label class="form-label">Official Barangay Logo</label>
+                        <div class="d-flex justify-content-center">
+                            <?php 
+                            $logo_src = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'https://via.placeholder.com/150?text=No+Logo';
+                            ?>
+                            <img id="logoPreview" src="<?php echo $logo_src; ?>" alt="Barangay Logo">
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold">Municipality / City</label>
-                            <input type="text" name="municipality" class="form-control" value="<?php echo htmlspecialchars($b_info['municipality']); ?>" required>
-                        </div>
+                        <input type="file" name="barangay_logo" class="form-control form-control-sm mt-2" accept=".jpg,.jpeg,.png" id="logoUpload">
+                        <small class="text-muted">Leave blank to keep current logo</small>
                     </div>
 
-                    <div class="mb-3">
-                        <label class="form-label fw-bold">Province</label>
-                        <input type="text" name="province" class="form-control" value="<?php echo htmlspecialchars($b_info['province']); ?>" required>
-                    </div>
-
-                    <hr class="my-4">
-
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold">Barangay Captain Full Name</label>
-                            <input type="text" name="captain_name" class="form-control" value="<?php echo htmlspecialchars($b_info['captain_name']); ?>">
+                    <div class="col-md-8 pl-4">
+                        <div class="mb-3">
+                            <label class="form-label">Barangay Name</label>
+                            <input type="text" name="barangay_name" class="form-control" value="<?php echo htmlspecialchars($info['barangay_name'] ?? ''); ?>" required>
                         </div>
-                        <div class="col-md-6 mb-3">
-                            <label class="form-label fw-bold">Official Contact Email</label>
-                            <input type="email" name="contact_email" class="form-control" value="<?php echo htmlspecialchars($b_info['contact_email']); ?>">
+                        <div class="mb-3">
+                            <label class="form-label text-success">Punong Barangay (Barangay Captain)</label>
+                            <input type="text" name="captain_name" class="form-control fw-bold" value="<?php echo htmlspecialchars($info['captain_name'] ?? ''); ?>" required placeholder="e.g. Hon. Juan Dela Cruz">
                         </div>
                     </div>
-                    
-                    <div class="mt-4 text-end">
-                        <button type="submit" name="update_info" class="btn btn-success fw-bold px-4 py-2 shadow-sm">💾 Save Changes</button>
+                </div>
+
+                <hr class="mb-4">
+
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Contact Number</label>
+                        <input type="text" name="contact_number" class="form-control" value="<?php echo htmlspecialchars($info['contact_number'] ?? ''); ?>" placeholder="Landline or Mobile">
                     </div>
-                </form>
-            </div>
+                    <div class="col-md-6 mb-3">
+                        <label class="form-label">Region</label>
+                        <input type="text" name="region" class="form-control" value="<?php echo htmlspecialchars($info['region'] ?? ''); ?>" placeholder="e.g. Region VII (Central Visayas)">
+                    </div>
+                </div>
+
+                <div class="row">
+                    <div class="col-md-8 mb-3">
+                        <label class="form-label">Barangay Address (Full)</label>
+                        <input type="text" name="full_address" class="form-control" value="<?php echo htmlspecialchars($info['full_address'] ?? ''); ?>" placeholder="e.g. Barangay Hall, M.L. Quezon St...">
+                    </div>
+                    <div class="col-md-4 mb-4">
+                        <label class="form-label">Zip Code</label>
+                        <input type="text" name="zip_code" class="form-control" value="<?php echo htmlspecialchars($info['zip_code'] ?? ''); ?>" placeholder="e.g. 6014">
+                    </div>
+                </div>
+
+                <button type="submit" name="update_info" class="btn btn-success w-100 py-2 fw-bold fs-5 shadow-sm" onclick="return confirm('Are you sure you want to update the official Barangay Information?');">
+                    💾 Save Changes
+                </button>
+            </form>
         </div>
-
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    
+    <script>
+        document.getElementById('logoUpload').addEventListener('change', function(event) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                document.getElementById('logoPreview').src = e.target.result;
+            }
+            if(event.target.files[0]) {
+                reader.readAsDataURL(event.target.files[0]);
+            }
+        });
+    </script>
 </body>
 </html>
