@@ -12,6 +12,14 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Admin') {
 $admin_id = $_SESSION['user_id'];
 $admin_data = $conn->query("SELECT full_name FROM users WHERE user_id = $admin_id")->fetch_assoc();
 
+// FETCH BARANGAY INFO FOR THE DYNAMIC SIDEBAR
+$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+if ($check_info && $check_info->num_rows > 0) {
+    $info = $check_info->fetch_assoc();
+} else {
+    $info = ['barangay_name' => 'Barangay System', 'logo_path' => ''];
+}
+
 // BACKEND: Handle the Basura-Alert Submission
 if (isset($_POST['send_basura_alert'])) {
     $purok = $_POST['purok_area'];
@@ -22,7 +30,7 @@ if (isset($_POST['send_basura_alert'])) {
     $stmt->bind_param("sis", $purok, $admin_id, $message);
     
     if ($stmt->execute()) {
-        echo "<script>alert('Basura-Alert successfully broadcasted to " . $purok . "!'); window.location.href='admin_dashboard.php';</script>";
+        echo "<script>alert('Basura-Alert successfully broadcasted to " . $purok . "!'); window.location.href='admin_dashboard.php?view=alert';</script>";
     } else {
         echo "<script>alert('Database error: Failed to send alert.');</script>";
     }
@@ -51,172 +59,113 @@ while($row = $map_query->fetch_assoc()) {
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            padding: 0;
-            display: flex; 
-            height: 100vh; 
-            background-color: #f4f7f6;
-        }
-
-        /* --- THE LEFT SIDEBAR --- */
-        #sidebar {
-            width: 260px;
-            background-color: #343a40; 
-            color: #fff;
-            display: flex;
-            flex-direction: column; 
-            padding-top: 20px;
-            box-shadow: 2px 0px 10px rgba(0,0,0,0.1);
-            position: fixed; 
-            height: 100%;
-            z-index: 1000;
-        }
-
-        #profile-header {
-            text-align: center;
-            padding-bottom: 20px;
-            border-bottom: 1px solid #4b545c;
-            margin-bottom: 20px;
-        }
-
-        #profile-pic {
-            width: 80px;
-            height: 80px;
-            border-radius: 50%; 
-            border: 3px solid #fff;
-            object-fit: cover;
-            margin-bottom: 10px;
-        }
-
-        #admin-name { font-weight: bold; font-size: 16px; }
-
-        /* Sidebar Buttons */
-        #nav-menu a {
-            color: #c2c7d0;
-            text-decoration: none;
-            padding: 12px 20px;
-            display: block; 
-            font-size: 15px;
-            transition: 0.3s;
-            border-radius: 4px;
-            margin: 0 10px 5px 10px;
-            cursor: pointer;
-        }
-
-        #nav-menu a:hover, #nav-menu a.active {
-            color: #fff;
-            background-color: #28a745; 
-            font-weight: bold;
-        }
-
-        #nav-menu #logout-link {
-            color: #dc3545; 
-            margin-top: auto; 
-            margin-bottom: 20px;
-        }
-
-        /* --- THE MAIN CONTENT AREA --- */
-        #main-content {
-            margin-left: 260px; 
-            flex: 1; 
-            padding: 30px;
-            overflow-y: auto; 
-        }
-
-        #dashboard-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
-            border-bottom: 2px solid #ddd;
-            padding-bottom: 10px;
-        }
+   <style>
+        /* ACCENT BACKGROUND */
+        body { font-family: Arial, sans-serif; background-color: #F5F5F5; display: flex; height: 100vh; margin: 0; }
         
-        /* Hides sections by default */
-        .content-section { display: none; }
+        /* SIDEBAR: PRIMARY DARK GREEN (#2E7D32) */
+        #sidebar { width: 260px; background-color: #2E7D32; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 4px 0px 15px rgba(0,0,0,0.15); position: fixed; height: 100%; z-index: 1000; }
+        
+        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4CAF50; margin-bottom: 20px; }
+        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; background-color: #fff; padding: 2px; }
+        #admin-name { font-weight: bold; font-size: 16px; margin-bottom: 2px; }
+        
+        #nav-menu a { color: #e8f5e9; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; }
+        
+        /* HOVER & ACTIVE: SECONDARY LIGHT GREEN (#4CAF50) */
+        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #4CAF50; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        
+        /* LOGOUT BUTTON */
+        #nav-menu #logout-link { color: #ffcdd2; margin-top: auto; margin-bottom: 20px; }
+        #nav-menu #logout-link:hover { background-color: #d32f2f; color: #fff; }
+        
+        /* MAIN CONTENT STYLES */
+        #main-content { margin-left: 260px; flex: 1; padding: 30px; overflow-y: auto; }
+        .page-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }
+        
+        .dashboard-card { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); margin-bottom: 20px; border-top: 4px solid #4CAF50; transition: 0.3s; }
+        .dashboard-card:hover { transform: translateY(-3px); box-shadow: 0 6px 15px rgba(0,0,0,0.1); }
+        .table-wrapper { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.05); }
+
+        /* CUSTOM SCROLLBAR */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #4CAF50; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
     </style>
 </head>
 <body>
 
-    <div id="sidebar">
+<div id="sidebar">
         <div id="profile-header">
-            <img src="uploads/default_profile.png" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
-            <div id="admin-name"><?php echo htmlspecialchars($admin_data['full_name']); ?></div>
-            <div style="font-size:12px; color:#aaa; margin-top:3px;">Barangay Secretary</div>
+            <?php 
+            $sidebar_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'uploads/default_profile.png';
+            $sidebar_bname = !empty($info['barangay_name']) ? 'Brgy. ' . $info['barangay_name'] : 'Barangay System';
+            
+            $current_view = isset($_GET['view']) ? $_GET['view'] : 'dashboard';
+            ?>
+            <img src="<?php echo $sidebar_logo; ?>" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
+            <div id="admin-name"><?php echo htmlspecialchars($sidebar_bname); ?></div>
+            <div style="font-size:11px; color:#e8f5e9;">Admin: <?php echo htmlspecialchars($admin_data['full_name']); ?></div>
         </div>
 
-       <div id="nav-menu">
-            <a id="tab-dashboard" class="active" onclick="switchTab('dashboard')">📊 Main Dashboard</a>
-            <a id="tab-reports" onclick="switchTab('reports')">🗑️ Waste Reports</a>
-            <a id="tab-map" onclick="switchTab('map')">📍 GIS Master Map</a>
+        <div id="nav-menu">
+            <a href="admin_dashboard.php?view=dashboard" id="tab-dashboard" class="<?php echo ($current_view == 'dashboard' || empty($_GET['view'])) ? 'active' : ''; ?>">📊 Main Dashboard</a>
+            <a href="admin_dashboard.php?view=reports" id="tab-reports" class="<?php echo ($current_view == 'reports') ? 'active' : ''; ?>">🗑️ Waste Reports</a>
+            <a href="admin_dashboard.php?view=alert" id="tab-alert" class="<?php echo ($current_view == 'alert') ? 'active' : ''; ?>">📢 Basura Dispatch Alert</a>
             
             <a href="approve_resident.php">👥 Approve Residents</a>
             <a href="print_report.php" target="_blank">🖨️ Print Monthly Report</a>
             <a href="barangay_info.php">ℹ️ System Information</a>
-            <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out of the system?');">🚪 Logout</a>
+            <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out?');">🚪 Logout</a>
         </div>
     </div>
 
     <div id="main-content">
-        <div id="dashboard-header">
-    <h2 id="page-title" style="margin:0;">🌊 Coastal & Land Watch</h2>
-    <div style="font-size:14px; color:#777; font-weight:bold;">
-        📅 <?php echo date('M d, Y'); ?> | 🕒 <span id="liveClock"></span>
-    </div>
-</div>
-
-        <div id="section-dashboard" class="content-section" style="display: block;">
-            
-            <div style="display: flex; gap: 20px; margin-bottom: 30px;">
-                <div style="flex:1; background:#dc3545; color:#fff; padding:20px; border-radius:8px;">
-                    <h3>Pending Reports</h3>
-                    <?php
-                    $pending = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Pending'")->fetch_assoc();
-                    echo "<h1 style='margin:0; font-size:48px;'>" . $pending['count'] . "</h1>";
-                    ?>
-                </div>
-                <div style="flex:1; background:#28a745; color:#fff; padding:20px; border-radius:8px;">
-                    <h3>Cleaned Areas</h3>
-                    <?php
-                    $cleaned = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Cleaned'")->fetch_assoc();
-                    echo "<h1 style='margin:0; font-size:48px;'>" . $cleaned['count'] . "</h1>";
-                    ?>
-                </div>
-                <div style="flex:1; background:#007bff; color:#fff; padding:20px; border-radius:8px;">
-                    <h3>Active Residents</h3>
-                    <?php
-                    $users = $conn->query("SELECT COUNT(*) as count FROM users WHERE role='Resident'")->fetch_assoc();
-                    echo "<h1 style='margin:0; font-size:48px;'>" . $users['count'] . "</h1>";
-                    ?>
-                </div>
-            </div>
-
-            <div style="width: 50%; background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 20px; border-radius: 5px;">
-                <h3 style="margin-top: 0; color: #856404;">📢 Dispatch Basura-Alert</h3>
-                <p style="color: #666; font-size: 14px;">Notify residents that the garbage truck is approaching their area.</p>
-                <form method="POST" action="">
-                    <label style="font-weight: bold;">Select Area:</label>
-                    <select name="purok_area" required style="width: 100%; padding: 10px; margin: 10px 0; border: 1px solid #ccc; border-radius: 4px;">
-                        <option value="Purok Uno">Purok Uno</option>
-                        <option value="Purok Dos">Purok Dos</option>
-                        <option value="Purok Tres">Purok Tres</option>
-                        <option value="All Areas">All Areas</option>
-                    </select>
-                    <label style="font-weight: bold;">Message:</label>
-                    <textarea name="alert_message" required style="width: 100%; padding: 10px; margin: 10px 0; height: 70px; border: 1px solid #ccc; border-radius: 4px;">The garbage truck is near your area! Please bring out your trash.</textarea>
-                    <button type="submit" name="send_basura_alert" style="width: 100%; background-color: #ffc107; border: none; padding: 12px; font-size: 16px; font-weight: bold; cursor: pointer; border-radius: 4px; color: #333;">Send Alert 🚚</button>
-                </form>
+        <div id="dashboard-header" class="page-header">
+            <h2 id="page-title" style="margin:0; color: #2E7D32; font-weight: bold;">📊 Main Dashboard</h2>
+            <div style="font-size:14px; color:#777; font-weight:bold;">
+                📅 <?php echo date('M d, Y'); ?> | 🕒 <span id="liveClock"></span>
             </div>
         </div>
 
-        <div id="section-reports" class="content-section">
-            <div style="background:#fff; padding: 20px; border-radius: 5px; border: 2px solid #ddd;">
+        <div id="section-dashboard" class="content-section" style="display: block;">
+            
+            <div style="display: flex; gap: 20px; margin-bottom: 20px;">
+                <div class="dashboard-card" style="flex:1; border-top: 5px solid #dc3545;">
+                    <h3 style="color: #dc3545;">Pending Reports</h3>
+                    <?php
+                    $pending = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Pending'")->fetch_assoc();
+                    echo "<h1 style='margin:0; font-size:48px; color: #333;'>" . $pending['count'] . "</h1>";
+                    ?>
+                </div>
+                <div class="dashboard-card" style="flex:1; border-top: 5px solid #28a745;">
+                    <h3 style="color: #28a745;">Cleaned Areas</h3>
+                    <?php
+                    $cleaned = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Cleaned'")->fetch_assoc();
+                    echo "<h1 style='margin:0; font-size:48px; color: #333;'>" . $cleaned['count'] . "</h1>";
+                    ?>
+                </div>
+                <div class="dashboard-card" style="flex:1; border-top: 5px solid #007bff;">
+                    <h3 style="color: #007bff;">Active Residents</h3>
+                    <?php
+                    $users = $conn->query("SELECT COUNT(*) as count FROM users WHERE role='Resident'")->fetch_assoc();
+                    echo "<h1 style='margin:0; font-size:48px; color: #333;'>" . $users['count'] . "</h1>";
+                    ?>
+                </div>
+            </div>
+
+            <div class="dashboard-card" style="border-top: 4px solid #4CAF50; padding: 15px;">
+                <h3 style="margin-top: 0; color:#333;">Barangay GIS Master Map 📍</h3>
+                <p style="color: #666; font-size: 14px;">Use the layer button (top right of map) to switch to Satellite View!</p>
+                <div id="masterMap" style="height: 450px; width: 100%; border-radius: 8px; border: 2px solid #ddd; z-index: 1;"></div>
+            </div>
+        </div>
+
+        <div id="section-reports" class="content-section" style="display: none;">
+            <div class="table-wrapper" style="border-top: 4px solid #4CAF50;">
                 
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; flex-wrap: wrap; gap: 15px;">
-                    <h3 style="margin: 0;">Recent Waste Reports</h3>
+                    <h3 style="margin: 0; color: #333;">Recent Waste Reports</h3>
                     
                     <div style="display: flex; gap: 15px; align-items: center;">
                         <input type="text" id="searchInput" placeholder="🔍 Search Name or Description..." style="padding: 10px; width: 280px; border: 1px solid #ccc; border-radius: 5px;">
@@ -229,52 +178,53 @@ while($row = $map_query->fetch_assoc()) {
                     </div>
                 </div>
 
-                <table border="1" cellpadding="10" style="width: 100%; text-align: left; border-collapse: collapse; border: 1px solid #ddd;">
-                    <tr style="background-color:#eee;">
-                        <th>Reporter</th>
-                        <th>Date</th>
-                        <th>Description</th>
-                        <th>Location</th>
-                        <th>Photos</th>
-                        <th>Status</th>
-                        <th>Action</th>
-                    </tr>
+                <table class="table table-bordered table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th>Reporter</th>
+                            <th>Date</th>
+                            <th>Description</th>
+                            <th>Location</th>
+                            <th>Photos</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
                     <tbody id="reportsTableBody">
                         <?php
                         $reports_query = $conn->query("SELECT waste_reports.*, users.full_name FROM waste_reports JOIN users ON waste_reports.resident_id = users.user_id ORDER BY waste_reports.created_at DESC");
                         
                         if($reports_query->num_rows > 0) {
                             while($row = $reports_query->fetch_assoc()) {
-                                // NEW: Added class 'report-row' and 'data-status' to let JavaScript filter it
                                 echo "<tr class='report-row' data-status='" . $row['status'] . "'>";
-                                echo "<td class='reporter-name'>" . $row['full_name'] . "</td>";
+                                echo "<td class='reporter-name fw-bold'>" . htmlspecialchars($row['full_name']) . "</td>";
                                 echo "<td>" . date("M d, Y", strtotime($row['created_at'])) . "</td>";
-                                echo "<td class='report-desc'>" . $row['description'] . "</td>";
+                                echo "<td class='report-desc'>" . htmlspecialchars($row['description']) . "</td>";
                                 
                                 $lat = isset($row['latitude']) ? $row['latitude'] : '0';
                                 $lng = isset($row['longitude']) ? $row['longitude'] : '0';
                                 echo "<td><a href='https://www.google.com/maps?q=" . $lat . "," . $lng . "' target='_blank' style='color:#007bff; text-decoration:none; font-weight:bold;'>Map 📍</a></td>";
                                 
-                                echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' style='color:#6c757d; text-decoration:none;'>Before</a> ";
+                                echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' class='badge bg-secondary text-decoration-none'>Before</a> ";
                                 if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
-                                    echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' style='color:#28a745; text-decoration:none;'>After ✅</a>";
+                                    echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' class='badge bg-success text-decoration-none mt-1'>After ✅</a>";
                                 }
                                 echo "</td>";
                                 
-                                $color = ($row['status'] == 'Pending') ? 'red' : 'green';
-                                echo "<td style='color:$color; font-weight:bold;'>" . $row['status'] . "</td>";
+                                $badgeColor = ($row['status'] == 'Pending') ? 'danger' : 'success';
+                                echo "<td><span class='badge bg-" . $badgeColor . " shadow-sm'>" . $row['status'] . "</span></td>";
                                 
                                 echo "<td>";
                                 if ($row['status'] == 'Pending') {
-                                    echo "<a href='resolve_report.php?id=" . $row['report_id'] . "' style='background:#28a745; color:#fff; padding:5px 10px; text-decoration:none; border-radius:3px;'>Resolve</a>";
+                                    echo "<a href='resolve_report.php?id=" . $row['report_id'] . "' class='btn btn-success btn-sm fw-bold shadow-sm'>Resolve</a>";
                                 } else {
-                                    echo "<span style='color:#aaa;'>Resolved</span>";
+                                    echo "<span class='text-muted small fw-bold'>Resolved</span>";
                                 }
                                 echo "</td>";
                                 echo "</tr>";
                             }
                         } else {
-                            echo "<tr id='no-data-row'><td colspan='7' style='text-align:center;'>No waste reports found.</td></tr>";
+                            echo "<tr id='no-data-row'><td colspan='7' style='text-align:center;' class='text-muted py-4'>No waste reports found.</td></tr>";
                         }
                         ?>
                     </tbody>
@@ -282,67 +232,107 @@ while($row = $map_query->fetch_assoc()) {
             </div>
         </div>
 
-        <div id="section-map" class="content-section">
-            <div style="border: 2px solid #ddd; border-radius: 5px; background:#fff; padding: 15px;">
-                <h3 style="margin-top: 0; color:#333;">Barangay Tanza GIS Master Map 📍</h3>
-                <p style="color: #666; font-size: 14px;">Red pins are Pending reports. Green pins are Cleaned areas.</p>
-                <div id="masterMap" style="height: 500px; width: 100%; border-radius: 4px;"></div>
+        <div id="section-alert" class="content-section" style="display: none;">
+            <div style="width: 100%; max-width: 600px; background-color: #fff3cd; border-left: 6px solid #ffc107; padding: 30px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.1); margin: 0 auto;">
+                <h3 style="margin-top: 0; color: #856404; font-weight: bold;">📢 Dispatch Basura-Alert</h3>
+                <p style="color: #666; font-size: 15px; margin-bottom: 20px;">Send an official broadcast to notify residents that the garbage truck is approaching their area or to share important waste management updates.</p>
+                
+                <form method="POST" action="">
+                    <div class="mb-3">
+                        <label style="font-weight: bold; color: #555;">Select Target Area:</label>
+                        <select name="purok_area" class="form-select" required style="padding: 12px; border-radius: 6px;">
+                            <option value="Purok Uno">Purok Uno</option>
+                            <option value="Purok Dos">Purok Dos</option>
+                            <option value="Purok Tres">Purok Tres</option>
+                            <option value="All Areas" selected>All Areas (Barangay-wide)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-4">
+                        <label style="font-weight: bold; color: #555;">Broadcast Message:</label>
+                        <textarea name="alert_message" class="form-control" required style="padding: 12px; height: 100px; border-radius: 6px;">The garbage truck is currently near your area! Please prepare and bring out your segregated trash.</textarea>
+                    </div>
+
+                    <button type="submit" name="send_basura_alert" class="btn btn-warning w-100 fw-bold fs-5 shadow-sm py-2">
+                        Broadcast Alert Now 🚚
+                    </button>
+                </form>
             </div>
         </div>
 
     </div> 
+
     <script>
         // 1. Tab Switching Logic
-        // NEW CODE: This reads the VIP pass in the URL and opens the right tab
         window.onload = function() {
             var urlParams = new URLSearchParams(window.location.search);
             var viewToOpen = urlParams.get('view');
             
-            // If the link says ?view=map, it automatically opens the map!
             if (viewToOpen) {
                 switchTab(viewToOpen);
+            } else {
+                switchTab('dashboard'); 
             }
         };
+
         function switchTab(tabName) {
-            // Hide all sections
             document.querySelectorAll('.content-section').forEach(function(section) {
                 section.style.display = 'none';
             });
             
-            // Remove 'active' color from all sidebar links
-            document.getElementById('tab-dashboard').classList.remove('active');
-            document.getElementById('tab-reports').classList.remove('active');
-            document.getElementById('tab-map').classList.remove('active');
+            var tabDash = document.getElementById('tab-dashboard');
+            var tabRep = document.getElementById('tab-reports');
+            var tabAlert = document.getElementById('tab-alert');
+            if(tabDash) tabDash.classList.remove('active');
+            if(tabRep) tabRep.classList.remove('active');
+            if(tabAlert) tabAlert.classList.remove('active');
             
-            // Show the selected section
-            document.getElementById('section-' + tabName).style.display = 'block';
+            var targetSection = document.getElementById('section-' + tabName);
+            if(targetSection) targetSection.style.display = 'block';
             
-            // Add 'active' color to the clicked link
-            document.getElementById('tab-' + tabName).classList.add('active');
+            var targetTab = document.getElementById('tab-' + tabName);
+            if(targetTab) targetTab.classList.add('active');
 
-            // Change the Header Title dynamically
             if (tabName === 'dashboard') {
                 document.getElementById('page-title').innerText = "📊 Main Dashboard";
+                setTimeout(function() { map.invalidateSize(); }, 200);
             } else if (tabName === 'reports') {
                 document.getElementById('page-title').innerText = "🗑️ Waste Reports";
-            } else if (tabName === 'map') {
-                document.getElementById('page-title').innerText = "📍 GIS Master Map";
-                
-                // PANEL DEFENSE TRICK: Maps glitch if loaded while hidden. 
-                // This forces the map to resize perfectly when the tab is clicked.
-                setTimeout(function() { map.invalidateSize(); }, 200);
+            } else if (tabName === 'alert') {
+                document.getElementById('page-title').innerText = "📢 Basura Dispatch Alert";
             }
         }
 
-        // 2. Map Initialization Logic
+        // ==========================================
+        // 2. UPDATED SATELLITE MAP LOGIC
+        // ==========================================
+        
+        // Setup Map Center
         var map = L.map('masterMap').setView([11.45, 123.15], 13);
 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        // Define Layer 1: Standard Street View
+        var streetView = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '© OpenStreetMap'
-        }).addTo(map);
+        });
 
-        // Define Custom Colored Pins
+        // Define Layer 2: High-Res Satellite View (Esri)
+        var satelliteView = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Tiles © Esri'
+        });
+
+        // Add Street View as the default when page loads
+        streetView.addTo(map);
+
+        // Create the Toggle Button for the top right corner
+        var baseMaps = {
+            "🗺️ Street View": streetView,
+            "🛰️ Satellite View": satelliteView
+        };
+        L.control.layers(baseMaps).addTo(map);
+
+        // Map Pins...
         var redPin = new L.Icon({
             iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
             shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
@@ -355,21 +345,14 @@ while($row = $map_query->fetch_assoc()) {
             iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41]
         });
 
-        // Load the data from PHP
         var locations = <?php echo json_encode($map_data); ?>;
         
         locations.forEach(function(loc) {
-            // 1. Check status to choose the pin color
             var currentIcon = (loc.status === 'Pending') ? redPin : greenPin; 
-            
-            // 2. Drop the pin on the map
             var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(map);
-            
-            // 3. Format the date to look nice (e.g., "Mar 20, 2026")
             var dateObj = new Date(loc.created_at);
             var dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 
-            // 4. Design the Hover Card (HTML inside the tooltip)
             var hoverCard = `
                 <div style="text-align:center; min-width: 160px; padding: 5px;">
                     <img src="uploads/reports/${loc.before_photo_path}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 5px; margin-bottom: 8px; border: 1px solid #ccc;">
@@ -384,35 +367,22 @@ while($row = $map_query->fetch_assoc()) {
                 </div>
             `;
             
-            // 5. Attach the Hover Card to the Pin
-            marker.bindTooltip(hoverCard, {
-                direction: 'top',   // Makes it pop up above the pin
-                opacity: 1,         // Removes transparency
-                className: 'custom-hover-card'
-            });
+            marker.bindTooltip(hoverCard, { direction: 'top', opacity: 1, className: 'custom-hover-card' });
         });
-        // 3. Live Search and Filter Logic for Waste Reports
-        let currentStatusFilter = 'All';
 
-        // Listen for typing in the search bar
+        // 3. Live Search and Filter Logic
+        let currentStatusFilter = 'All';
         document.getElementById('searchInput').addEventListener('keyup', applyFilters);
 
-        // Function called when a filter button is clicked
         function filterTable(status) {
             currentStatusFilter = status;
-            
-            // Reset all buttons to gray
             document.getElementById('filter-All').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
             document.getElementById('filter-Pending').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
             document.getElementById('filter-Cleaned').style.cssText = "background-color: #e9ecef; color: #333; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
-            
-            // Highlight the clicked button in blue
             document.getElementById('filter-' + status).style.cssText = "background-color: #007bff; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 5px;";
-            
             applyFilters();
         }
 
-        // The main function that hides/shows rows
         function applyFilters() {
             let searchText = document.getElementById('searchInput').value.toLowerCase();
             let rows = document.querySelectorAll('.report-row');
@@ -422,18 +392,18 @@ while($row = $map_query->fetch_assoc()) {
                 let description = row.querySelector('.report-desc').innerText.toLowerCase();
                 let rowStatus = row.getAttribute('data-status');
                 
-                // Check if row matches search text AND matches the button filter
                 let matchesSearch = reporterName.includes(searchText) || description.includes(searchText);
                 let matchesStatus = (currentStatusFilter === 'All') || (rowStatus === currentStatusFilter);
                 
                 if (matchesSearch && matchesStatus) {
-                    row.style.display = ''; // Show row
+                    row.style.display = ''; 
                 } else {
-                    row.style.display = 'none'; // Hide row
+                    row.style.display = 'none'; 
                 }
             });
         }
-        // NEW FEATURE: Live ticking clock
+
+        // 4. Live Clock
         setInterval(function() {
             var now = new Date();
             document.getElementById('liveClock').innerText = now.toLocaleTimeString();
