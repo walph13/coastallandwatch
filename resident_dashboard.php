@@ -127,7 +127,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                             while($clean = $cleaned->fetch_assoc()) {
                                 echo "<div class='list-group-item list-group-item-success'>";
                                 echo "<strong class='d-block mb-1'>✅ Report Cleaned!</strong>";
-                                echo "<span class='small'>Your report at <b>" . $clean['description'] . "</b> has been resolved.</span>";
+                                echo "<span class='small'>Your report at <b>" . htmlspecialchars($clean['description']) . "</b> has been resolved.</span>";
                                 echo "</div>";
                             }
                         }
@@ -161,8 +161,8 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                             <button type="button" onclick="getLocation()" class="btn btn-outline-primary fw-bold me-3">📍 Auto-Detect My Location</button>
                             <span id="location_status" class="text-danger fw-bold small">Not pinned yet.</span>
                         </div>
-                        <p class="text-muted small fw-bold mb-1">Or Pin Location Manually on the Map:</p>
-                        <div id="pinMap" style="height: 250px; width: 100%; margin-bottom: 20px;"></div>
+                        <p class="text-muted small fw-bold mb-1">Or Pin Location Manually on the Map (Use the layers button for Satellite View!):</p>
+                        <div id="pinMap" style="height: 300px; width: 100%; margin-bottom: 20px;"></div>
                         <button type="submit" name="submit_report" id="submit_btn" class="btn btn-success w-100 fw-bold py-2 shadow-sm" disabled>Submit Report to Barangay</button>
                     </form>
                 </div>
@@ -191,17 +191,17 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                                 if ($history->num_rows > 0) {
                                     while ($row = $history->fetch_assoc()) {
                                         echo "<tr>";
-                                        echo "<td class='text-start'>" . $row['description'] . "</td>";
+                                        echo "<td class='text-start'>" . htmlspecialchars($row['description']) . "</td>";
                                         $l_lat = isset($row['latitude']) ? $row['latitude'] : '0';
                                         $l_lng = isset($row['longitude']) ? $row['longitude'] : '0';
                                         echo "<td><a href='https://www.google.com/maps?q=" . $l_lat . "," . $l_lng . "' target='_blank' class='btn btn-sm btn-outline-primary'>Map 📍</a></td>";
                                         echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' class='badge bg-secondary text-decoration-none'>Before</a> ";
                                         if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
-                                            echo "<a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' class='badge bg-success text-decoration-none mt-1'>After</a>";
+                                            echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' class='badge bg-success text-decoration-none mt-1'>After</a>";
                                         }
                                         echo "</td>";
                                         $badgeColor = ($row['status'] == 'Pending') ? 'danger' : 'success';
-                                        echo "<td><span class='badge bg-" . $badgeColor . "'>" . $row['status'] . "</span></td>";
+                                        echo "<td><span class='badge bg-" . $badgeColor . " shadow-sm'>" . $row['status'] . "</span></td>";
                                         echo "</tr>";
                                     }
                                 } else {
@@ -259,7 +259,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
 
     <script>
-        // Only run Notification script if the button exists (Approved Users Only)
+        // Notification Toggle
         var notifBtn = document.getElementById("notifBtn");
         if(notifBtn) {
             notifBtn.onclick = function() {
@@ -268,6 +268,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             }
         }
 
+        // Open Reporting Station
         function toggleReportingStation() {
             var station = document.getElementById("reportingStation");
             if (station.style.display === "none" || station.style.display === "") {
@@ -279,6 +280,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             }
         }
 
+        // Geolocation
         function getLocation() {
             if (navigator.geolocation) {
                 document.getElementById("location_status").innerHTML = "Locating...";
@@ -293,6 +295,15 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             document.getElementById("location_status").innerHTML = "Location Pinned! ✔️";
             document.getElementById("location_status").className = "text-success fw-bold small ms-2";
             document.getElementById("submit_btn").disabled = false;
+            
+            // Move map pin automatically if auto-detected
+            if (submitMap) {
+                var click_lat = position.coords.latitude;
+                var click_lng = position.coords.longitude;
+                submitMap.setView([click_lat, click_lng], 16);
+                if (currentPin) { submitMap.removeLayer(currentPin); }
+                currentPin = L.marker([click_lat, click_lng]).addTo(submitMap);
+            }
         }
 
         function showError(error) {
@@ -301,15 +312,39 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             document.getElementById("location_status").className = "text-danger fw-bold small ms-2";
         }
 
-        // Only run Map script if the map container exists (Approved Users Only)
+        // ==========================================
+        // MAP LOGIC WITH SATELLITE VIEW
+        // ==========================================
         var mapContainer = document.getElementById('pinMap');
         var submitMap;
         var currentPin;
         
         if(mapContainer) {
             submitMap = L.map('pinMap').setView([11.45, 123.15], 13);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(submitMap);
+            
+            // Layer 1: Street View
+            var streetView = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '© OpenStreetMap'
+            });
 
+            // Layer 2: Satellite View (Esri)
+            var satelliteView = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                maxZoom: 19,
+                attribution: 'Tiles © Esri'
+            });
+
+            // Add Street View as the default when page loads
+            streetView.addTo(submitMap);
+
+            // Create the Toggle Button for the top right corner
+            var baseMaps = {
+                "🗺️ Street View": streetView,
+                "🛰️ Satellite View": satelliteView
+            };
+            L.control.layers(baseMaps).addTo(submitMap);
+
+            // Manual Pin Dropping
             submitMap.on('click', function(e) {
                 var click_lat = e.latlng.lat;
                 var click_lng = e.latlng.lng;
@@ -323,7 +358,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             });
         }
 
-        // Only run Photo Preview script if the input exists (Approved Users Only)
+        // Photo Preview
         var photoInput = document.querySelector('input[name="photo_before"]');
         if(photoInput) {
             photoInput.addEventListener('change', function(event) {
