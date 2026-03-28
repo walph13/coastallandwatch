@@ -85,24 +85,32 @@ if (isset($_POST['update_info'])) {
     <title>System Information - Barangay Tanza</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-        body { font-family: Arial, sans-serif; background-color: #f4f7f6; display: flex; height: 100vh; margin: 0; }
+        body { font-family: Arial, sans-serif; background-color: #F5F5F5; display: flex; height: 100vh; margin: 0; }
         
-        /* SIDEBAR STYLES */
-        #sidebar { width: 260px; background-color: #343a40; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 2px 0px 10px rgba(0,0,0,0.1); position: fixed; height: 100%; z-index: 1000; }
-        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4b545c; margin-bottom: 20px; }
-        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; }
-        #admin-name { font-weight: bold; font-size: 16px; }
-        #nav-menu a { color: #c2c7d0; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; }
-        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #28a745; font-weight: bold; }
-        #nav-menu #logout-link { color: #dc3545; margin-top: auto; margin-bottom: 20px; }
+        /* NEW GREEN SIDEBAR */
+        #sidebar { width: 260px; background-color: #2E7D32; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 4px 0px 15px rgba(0,0,0,0.15); position: fixed; height: 100%; z-index: 1000; }
+        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4CAF50; margin-bottom: 20px; }
+        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; background-color: #fff; padding: 2px; }
+        #admin-name { font-weight: bold; font-size: 18px; margin-bottom: 2px; }
         
-        /* MAIN CONTENT STYLES */
+        #nav-menu a { color: #e8f5e9; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; }
+        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #4CAF50; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        #nav-menu #logout-link { color: #ffcdd2; margin-top: auto; margin-bottom: 20px; }
+        #nav-menu #logout-link:hover { background-color: #d32f2f; color: #fff; }
+        
+        /* MAIN CONTENT */
         #main-content { margin-left: 260px; flex: 1; padding: 30px; overflow-y: auto; }
         .page-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #ddd; padding-bottom: 10px; margin-bottom: 20px; }
         
-        .form-card { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-top: 5px solid #28a745; max-width: 900px; margin: 0 auto; }
+        /* MATCHING FORM CARD */
+        .form-card { background: #fff; padding: 30px; border-radius: 10px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-top: 5px solid #2E7D32; max-width: 900px; margin: 0 auto; }
         .form-label { font-weight: bold; color: #555; }
         #logoPreview { width: 120px; height: 120px; object-fit: cover; border-radius: 50%; border: 3px solid #ddd; display: block; margin: 10px 0; }
+
+        /* CUSTOM GREEN SCROLLBAR */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #4CAF50; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
     </style>
 </head>
 <body>
