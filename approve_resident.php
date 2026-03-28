@@ -12,6 +12,10 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Admin') {
 $admin_id = $_SESSION['user_id'];
 $admin_data = $conn->query("SELECT full_name FROM users WHERE user_id = $admin_id")->fetch_assoc();
 
+// FETCH BARANGAY INFO FOR THE DYNAMIC SIDEBAR
+$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+$info = $check_info->fetch_assoc();
+
 // BACKEND: Handle Approve or Reject Actions
 if (isset($_GET['action']) && isset($_GET['id'])) {
     $target_id = intval($_GET['id']);
@@ -21,7 +25,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         $conn->query("UPDATE users SET account_status='Approved' WHERE user_id=$target_id");
         echo "<script>alert('Resident successfully approved!'); window.location.href='approve_resident.php';</script>";
     } elseif ($action === 'reject') {
-        // You could also delete the user entirely: "DELETE FROM users WHERE user_id=$target_id"
         $conn->query("UPDATE users SET account_status='Rejected' WHERE user_id=$target_id");
         echo "<script>alert('Resident application rejected.'); window.location.href='approve_resident.php';</script>";
     }
@@ -36,46 +39,61 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
     <style>
+        /* BASE STYLES & GREEN THEME */
+        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background-color: #F5F5F5; }
         
-        /* BASE STYLES & SIDEBAR (Matches Admin Dashboard perfectly) */
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background-color: #f4f7f6; }
+        /* SIDEBAR: PRIMARY DARK GREEN (#2E7D32) */
+        #sidebar { width: 260px; background-color: #2E7D32; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 4px 0px 15px rgba(0,0,0,0.15); position: fixed; height: 100%; z-index: 1000; }
+        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4CAF50; margin-bottom: 20px; }
+        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; background-color: #fff; padding: 2px; }
+        #admin-name { font-weight: bold; font-size: 18px; margin-bottom: 2px; }
         
-        #sidebar { width: 260px; background-color: #343a40; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 2px 0px 10px rgba(0,0,0,0.1); position: fixed; height: 100%; z-index: 1000; }
-        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4b545c; margin-bottom: 20px; }
-        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; }
-        #admin-name { font-weight: bold; font-size: 16px; }
-        
-        #nav-menu a { color: #c2c7d0; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; cursor: pointer; }
-        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #28a745; font-weight: bold; }
-        #nav-menu #logout-link { color: #dc3545; margin-top: auto; margin-bottom: 20px; }
+        #nav-menu a { color: #e8f5e9; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; cursor: pointer; }
+        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #4CAF50; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+        #nav-menu #logout-link { color: #ffcdd2; margin-top: auto; margin-bottom: 20px; }
+        #nav-menu #logout-link:hover { background-color: #d32f2f; color: #fff; }
 
         #main-content { margin-left: 260px; flex: 1; padding: 30px; overflow-y: auto; }
         #dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
+        #dashboard-header h2 { color: #2E7D32; font-weight: bold; }
 
         /* TAB MENU STYLES FOR THIS PAGE */
         .tab-menu { display: flex; gap: 10px; margin-bottom: 20px; }
         .tab-btn { background-color: #e9ecef; border: none; padding: 10px 20px; font-size: 15px; font-weight: bold; color: #555; border-radius: 5px; cursor: pointer; transition: 0.2s; }
         .tab-btn:hover { background-color: #d3d9df; }
-        .tab-btn.active { background-color: #007bff; color: white; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); }
         
-        .content-section { display: none; background: #fff; padding: 20px; border-radius: 5px; border: 1px solid #ddd; box-shadow: 0px 2px 4px rgba(0,0,0,0.05); }
+        /* ACTIVE TAB: DARK GREEN */
+        .tab-btn.active { background-color: #2E7D32; color: white; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); }
+        
+        /* CONTENT CARDS: MATCHING THE GREEN TOP BORDER */
+        .content-section { display: none; background: #fff; padding: 20px; border-radius: 8px; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-top: 4px solid #4CAF50; }
         table { width: 100%; border-collapse: collapse; margin-top: 15px; }
         th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
         th { background-color: #f8f9fa; color: #333; }
         
         .btn-sm { padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px;}
-        .btn-approve { background-color: #28a745; color: white; }
+        .btn-approve { background-color: #2E7D32; color: white; }
         .btn-reject { background-color: #dc3545; color: white; }
         .btn-view { background-color: #17a2b8; color: white; }
+
+        /* CUSTOM GREEN SCROLLBAR */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-thumb { background: #4CAF50; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: #F5F5F5; }
     </style>
 </head>
 <body>
 
     <div id="sidebar">
         <div id="profile-header">
-            <img src="uploads/default_profile.png" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
-            <div id="admin-name"><?php echo htmlspecialchars($admin_data['full_name']); ?></div>
-            <div style="font-size:12px; color:#aaa; margin-top:3px;">Barangay Secretary</div>
+            <?php 
+            // Pulls the logo and name from the database!
+            $sidebar_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'uploads/default_profile.png';
+            $sidebar_bname = !empty($info['barangay_name']) ? 'Brgy. ' . $info['barangay_name'] : 'Barangay System';
+            ?>
+            <img src="<?php echo $sidebar_logo; ?>" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
+            <div id="admin-name"><?php echo htmlspecialchars($sidebar_bname); ?></div>
+            <div style="font-size:11px; color:#aaa;">Admin: <?php echo htmlspecialchars($admin_data['full_name']); ?></div>
         </div>
 
         <div id="nav-menu">
@@ -102,7 +120,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         </div>
 
         <div id="section-pending" class="content-section" style="display: block;">
-            <h3 style="margin-top: 0;">Residents Awaiting Approval</h3>
+            <h3 style="margin-top: 0; color: #333;">Residents Awaiting Approval</h3>
             <p style="color: #666; font-size: 14px;">Please review the uploaded IDs before granting access to the system.</p>
             
             <table>
@@ -136,7 +154,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         </div>
 
         <div id="section-active" class="content-section">
-            <h3 style="margin-top: 0;">Currently Active Residents</h3>
+            <h3 style="margin-top: 0; color: #333;">Currently Active Residents</h3>
             <p style="color: #666; font-size: 14px;">These residents have full access to submit waste reports and receive alerts.</p>
             
             <table>
@@ -154,7 +172,7 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
                         echo "<td>" . htmlspecialchars($row['username']) . "</td>";
                         echo "<td>" . htmlspecialchars($row['phone_number']) . "</td>";
-                        echo "<td><span style='color: green; font-weight: bold;'>Approved</span></td>";
+                        echo "<td><span style='color: #2E7D32; font-weight: bold;'>Approved</span></td>";
                         echo "</tr>";
                     }
                 } else {
