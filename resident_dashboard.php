@@ -280,14 +280,22 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             }
         }
 
-        // Geolocation
-        function getLocation() {
-            if (navigator.geolocation) {
-                document.getElementById("location_status").innerHTML = "Locating...";
-                document.getElementById("location_status").className = "text-warning fw-bold small ms-2";
-                navigator.geolocation.getCurrentPosition(showPosition, showError);
-            } else { alert("Geolocation is not supported."); }
-        }
+       //Geolocation
+function getLocation() {
+    if (navigator.geolocation) {
+        document.getElementById("location_status").innerHTML = "Locating...";
+        document.getElementById("location_status").className = "text-warning fw-bold small ms-2";
+        
+        // Use high accuracy for precise coordinates in Barangay Tanza
+        navigator.geolocation.getCurrentPosition(showPosition, showError, {
+            enableHighAccuracy: true,  // Forces the device to use GPS
+            timeout: 10000,           // Wait up to 10 seconds for a fix
+            maximumAge: 0             // Always get a fresh location, not a cached one
+        });
+    } else { 
+        alert("Geolocation is not supported by your browser."); 
+    }
+}
 
         function showPosition(position) {
             document.getElementById("lat").value = position.coords.latitude;
