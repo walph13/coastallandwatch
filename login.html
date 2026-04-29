@@ -5,11 +5,14 @@ include 'db_connect.php';
 $login_error = '';
 $login_warning = '';
 
+// ==========================================
+// YOUR SECURE BACKEND LOGIC
+// ==========================================
 if (isset($_POST['login'])) {
     $username = trim($_POST['username']);
     $password = $_POST['password'];
 
-    // 1. Find the user in the database
+    // 1. Find the user in the database (Using your secure prepared statement!)
     $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
@@ -31,8 +34,7 @@ if (isset($_POST['login'])) {
                 $login_error = "❌ Your registration was rejected. Please contact the Barangay Hall.";
             } 
             else {
-                // Account is either Approved OR Pending (Both get to log in now!)
-                // Admin accounts also get through here.
+                // Account is Approved or Pending. Both log in!
                 $_SESSION['user_id'] = $user['user_id'];
                 $_SESSION['role'] = $user['role'];
 
@@ -51,6 +53,20 @@ if (isset($_POST['login'])) {
         $login_error = "❌ Username not found.";
     }
 }
+
+// ==========================================
+// FETCH DYNAMIC LOGO FROM SYSTEM INFO
+// ==========================================
+$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+if ($check_info && $check_info->num_rows > 0) {
+    $info = $check_info->fetch_assoc();
+} else {
+    $info = [];
+}
+
+// If they uploaded a logo in the system, use it. Otherwise, use tanzalogo.jpg.
+$login_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'tanzalogo.jpg';
+$system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'Barangay Coastal & Land Watch';
 ?>
 
 <!DOCTYPE html>
@@ -58,67 +74,165 @@ if (isset($_POST['login'])) {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Login - Coastal & Land Watch</title>
+    <title>System Login - Coastal & Land Watch</title>
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    
     <style>
-        body { background-color: #f4f7f6; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: Arial, sans-serif; }
-        .login-card { width: 100%; max-width: 400px; padding: 30px; border-radius: 12px; box-shadow: 0px 10px 30px rgba(0,0,0,0.1); border: none; }
-        .login-title { color: #28a745; font-weight: bold; text-align: center; margin-bottom: 25px; }
-        .form-control:focus { border-color: #28a745; box-shadow: 0 0 8px rgba(40, 167, 69, 0.4); }
+        /* PAGE BACKGROUND */
+        body { 
+            font-family: 'Segoe UI', Arial, sans-serif; 
+            background-color: #ECEFF1; 
+            display: flex; 
+            align-items: center; 
+            justify-content: center; 
+            min-height: 100vh; 
+            margin: 0; 
+        }
+
+        /* LOGIN CARD STYLING */
+        .login-card { 
+            background: #fff; 
+            padding: 40px; 
+            border-radius: 16px; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.08); 
+            border: 1px solid rgba(0,0,0,0.05); 
+            width: 100%; 
+            max-width: 420px; 
+        }
+
+        /* LOGO STYLING */
+        .brand-logo {
+            width: 110px;
+            height: 110px;
+            object-fit: cover;
+            border-radius: 50%;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            border: 3px solid #ECEFF1;
+            background-color: #fff;
+            padding: 2px;
+        }
+
+        /* TYPOGRAPHY */
+        .system-title { font-weight: 800; color: #1B5E20; font-size: 24px; margin-bottom: 5px; }
+        .system-subtitle { color: #546E7A; font-size: 14px; font-weight: 600; margin-bottom: 30px; letter-spacing: 0.5px; }
+        .form-label { font-weight: 700; color: #546E7A; font-size: 13px; margin-bottom: 6px; }
+
+        /* MODERN INPUTS */
+        .custom-input { 
+            border-radius: 8px; 
+            border: 1px solid #CFD8DC; 
+            padding: 12px 14px; 
+            background-color: #F8FDFF; 
+            color: #263238; 
+            transition: 0.2s; 
+            box-shadow: none !important;
+        }
+        .custom-input:focus { border-color: #81C784; background-color: #fff; }
+        
+        /* PASSWORD EYE TOGGLE STYLING */
+        .input-group .custom-input { border-right: none; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+        .custom-input-btn { 
+            border-color: #CFD8DC; 
+            background-color: #F8FDFF; 
+            border-left: none; 
+            border-top-right-radius: 8px; 
+            border-bottom-right-radius: 8px; 
+            color: #546E7A; 
+        }
+        .custom-input:focus + .custom-input-btn { border-color: #81C784; background-color: #fff; }
+
+        /* LOGIN BUTTON */
+        .btn-login { 
+            background-color: #2E7D32; 
+            color: #fff; 
+            border: none; 
+            border-radius: 8px; 
+            font-weight: 800; 
+            font-size: 16px;
+            padding: 12px;
+            transition: 0.3s; 
+            box-shadow: 0 4px 10px rgba(46,125,50,0.2);
+        }
+        .btn-login:hover { 
+            background-color: #1B5E20; 
+            transform: translateY(-2px); 
+            box-shadow: 0 6px 15px rgba(27,94,32,0.3); 
+            color: #fff; 
+        }
+
+        /* REGISTER LINK */
+        .register-text { font-size: 14px; color: #546E7A; margin-top: 20px; }
+        .register-link { color: #1E88E5; font-weight: 700; text-decoration: none; transition: 0.2s; }
+        .register-link:hover { color: #1565C0; text-decoration: underline; }
     </style>
 </head>
 <body>
 
-    <div class="card login-card">
-        <h2 class="login-title">System Login</h2>
+    <div class="login-card">
+        
+        <div class="text-center">
+            <img src="<?php echo htmlspecialchars($login_logo); ?>" alt="Barangay Logo" class="brand-logo" onerror="this.src='tanzalogo.jpg'">
+            <h2 class="system-title">System Login</h2>
+            <p class="system-subtitle"><?php echo htmlspecialchars($system_title); ?></p>
+        </div>
 
         <?php if(!empty($login_warning)): ?>
-            <div class="alert alert-warning shadow-sm fw-bold text-dark text-center" style="font-size: 14px;">
+            <div class="alert alert-warning shadow-sm fw-bold text-dark text-center" style="font-size: 14px; border-radius: 8px;">
                 <?php echo $login_warning; ?>
             </div>
         <?php endif; ?>
 
         <?php if(!empty($login_error)): ?>
-            <div class="alert alert-danger shadow-sm fw-bold text-center" style="font-size: 14px;">
+            <div class="alert alert-danger shadow-sm fw-bold text-center" style="font-size: 14px; border-radius: 8px;">
                 <?php echo $login_error; ?>
             </div>
         <?php endif; ?>
 
         <form method="POST" action="">
+            
             <div class="mb-3">
-                <label class="form-label fw-bold text-muted">Username</label>
-                <input type="text" name="username" class="form-control py-2" required placeholder="Enter your username">
+                <label class="form-label">Username</label>
+                <input type="text" name="username" class="form-control custom-input" placeholder="Enter your username" required>
             </div>
 
             <div class="mb-4">
-                <label class="form-label fw-bold text-muted">Password</label>
+                <label class="form-label">Password</label>
                 <div class="input-group">
-                    <input type="password" id="pwdInput" name="password" class="form-control py-2" required placeholder="••••••••">
-                    <button class="btn btn-outline-secondary" type="button" onclick="togglePwd()"><span id="pwdIcon">👁️</span></button>
+                    <input type="password" name="password" id="passwordInput" class="form-control custom-input" placeholder="••••••••" required>
+                    <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">
+                        👁️
+                    </button>
                 </div>
             </div>
 
-            <button type="submit" name="login" class="btn btn-success w-100 fw-bold py-2 shadow-sm mb-3">Log In</button>
+           <div class="text-end mb-3 mt-1">
+                <a href="forgot_password.php" style="font-size: 13px; font-weight: 600; color: #E65100; text-decoration: none;">Forgot Password?</a>
+            </div>
+
+            <button type="submit" name="login" class="btn w-100 btn-login">
+                Log In
+            </button>
+
         </form>
 
-        <div class="text-center mt-2">
-            <span class="text-muted small">Don't have an account?</span>
-            <a href="register.php" class="text-success fw-bold text-decoration-none small">Register Here</a>
+        <div class="text-center register-text">
+            Don't have an account? <a href="register.php" class="register-link">Register Here</a>
         </div>
+
     </div>
 
     <script>
-        function togglePwd() {
-            const pwd = document.getElementById("pwdInput");
-            const icon = document.getElementById("pwdIcon");
-            if (pwd.type === "password") {
-                pwd.type = "text";
-                icon.innerText = "🙈";
-            } else {
-                pwd.type = "password";
-                icon.innerText = "👁️";
-            }
-        }
+        const togglePassword = document.querySelector('#togglePassword');
+        const password = document.querySelector('#passwordInput');
+
+        togglePassword.addEventListener('click', function (e) {
+            const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
+            password.setAttribute('type', type);
+            this.textContent = type === 'password' ? '👁️' : '🙈';
+        });
     </script>
+
 </body>
 </html>
