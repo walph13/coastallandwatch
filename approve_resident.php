@@ -39,47 +39,58 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
 
     <style>
-        /* BASE STYLES & GREEN THEME */
-        body { font-family: Arial, sans-serif; margin: 0; padding: 0; display: flex; height: 100vh; background-color: #F5F5F5; }
-        
-        /* SIDEBAR: PRIMARY DARK GREEN (#2E7D32) */
-        #sidebar { width: 260px; background-color: #2E7D32; color: #fff; display: flex; flex-direction: column; padding-top: 20px; box-shadow: 4px 0px 15px rgba(0,0,0,0.15); position: fixed; height: 100%; z-index: 1000; }
-        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid #4CAF50; margin-bottom: 20px; }
-        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 10px; background-color: #fff; padding: 2px; }
-        #admin-name { font-weight: bold; font-size: 18px; margin-bottom: 2px; }
-        
-        #nav-menu a { color: #e8f5e9; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-radius: 4px; margin: 0 10px 5px 10px; cursor: pointer; }
-        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: #4CAF50; font-weight: bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
-        #nav-menu #logout-link { color: #ffcdd2; margin-top: auto; margin-bottom: 20px; }
-        #nav-menu #logout-link:hover { background-color: #d32f2f; color: #fff; }
+        /* PAGE BACKGROUND (#ECEFF1) */
+        body { font-family: 'Segoe UI', Arial, sans-serif; background-color: #ECEFF1; display: flex; height: 100vh; margin: 0; }
 
-        #main-content { margin-left: 260px; flex: 1; padding: 30px; overflow-y: auto; }
-        #dashboard-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
-        #dashboard-header h2 { color: #2E7D32; font-weight: bold; }
+        /* DARKER SIDEBAR (#1B5E20) */
+        #sidebar { width: 260px; background-color: #1B5E20; color: #fff; display: flex; flex-direction: column; padding-top: 30px; box-shadow: 4px 0px 15px rgba(0,0,0,0.1); position: fixed; height: 100%; z-index: 1000; }
+        #profile-header { text-align: center; padding-bottom: 20px; border-bottom: 1px solid rgba(255,255,255,0.1); margin-bottom: 15px; }
+        
+        #profile-pic { width: 80px; height: 80px; border-radius: 50%; border: 3px solid #fff; object-fit: cover; margin-bottom: 15px; background-color: #fff; padding: 2px; }
+        
+        #admin-name { font-weight: 800; font-size: 18px; margin-bottom: 2px; letter-spacing: 0.5px; }
+        #admin-location { font-size: 12px; color: #A5D6A7; margin-bottom: 5px; }
+        
+        .sidebar-menu-title { font-size: 11px; color: #81C784; font-weight: 700; letter-spacing: 1px; padding: 0 20px; margin-bottom: 10px; margin-top: 10px; text-transform: uppercase; }
 
-        /* TAB MENU STYLES FOR THIS PAGE */
-        .tab-menu { display: flex; gap: 10px; margin-bottom: 20px; }
-        .tab-btn { background-color: #e9ecef; border: none; padding: 10px 20px; font-size: 15px; font-weight: bold; color: #555; border-radius: 5px; cursor: pointer; transition: 0.2s; }
-        .tab-btn:hover { background-color: #d3d9df; }
-        
-        /* ACTIVE TAB: DARK GREEN */
-        .tab-btn.active { background-color: #2E7D32; color: white; box-shadow: 0px 4px 6px rgba(0,0,0,0.1); }
-        
-        /* CONTENT CARDS: MATCHING THE GREEN TOP BORDER */
-        .content-section { display: none; background: #fff; padding: 20px; border-radius: 8px; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.05); border-top: 4px solid #4CAF50; }
-        table { width: 100%; border-collapse: collapse; margin-top: 15px; }
-        th, td { padding: 12px; border: 1px solid #ddd; text-align: left; }
-        th { background-color: #f8f9fa; color: #333; }
-        
-        .btn-sm { padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; font-weight: bold; display: inline-block; margin-right: 5px;}
-        .btn-approve { background-color: #2E7D32; color: white; }
-        .btn-reject { background-color: #dc3545; color: white; }
-        .btn-view { background-color: #17a2b8; color: white; }
+        #nav-menu a { color: #C8E6C9; text-decoration: none; padding: 12px 20px; display: block; font-size: 15px; transition: 0.3s; border-left: 4px solid transparent; }
+        #nav-menu a:hover, #nav-menu a.active { color: #fff; background-color: rgba(255,255,255,0.1); border-left: 4px solid #81C784; font-weight: 700; }
+        #nav-menu #logout-link { color: #FFCDD2; margin-top: auto; margin-bottom: 30px; border-left: 4px solid transparent; }
+        #nav-menu #logout-link:hover { background-color: #D32F2F; color: #fff; border-left: 4px solid #FF5252; }
 
-        /* CUSTOM GREEN SCROLLBAR */
+        /* MAIN CONTENT */
+        #main-content { margin-left: 260px; flex: 1; padding: 40px; overflow-y: auto; }
+        .page-header { margin-bottom: 25px; }
+        .page-title { margin:0; font-weight: 800; color: #263238; font-size: 24px; }
+
+        /* SLEEK TABS */
+        .tab-menu { display: flex; gap: 12px; margin-bottom: 25px; }
+        .tab-btn { background-color: #CFD8DC; border: none; padding: 10px 24px; font-size: 14px; font-weight: 700; color: #455A64; border-radius: 8px; cursor: pointer; transition: 0.2s; }
+        .tab-btn:hover { background-color: #B0BEC5; }
+        .tab-btn.active { background-color: #2E7D32; color: white; box-shadow: 0px 4px 10px rgba(46,125,50,0.2); }
+
+        /* CONTENT CARDS */
+        .content-section { display: none; background: #fff; padding: 30px; border-radius: 16px; box-shadow: 0 8px 24px rgba(0,0,0,0.04); border: 1px solid rgba(0,0,0,0.05); }
+        
+        /* MODERN TABLES */
+        table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
+        th, td { padding: 16px 12px; border-bottom: 1px solid #ECEFF1; text-align: left; vertical-align: middle; }
+        th { background-color: #F8FDFF; color: #546E7A; font-weight: 700; text-transform: uppercase; font-size: 12px; letter-spacing: 0.5px; border-bottom: 2px solid #CFD8DC; }
+        tr:hover { background-color: #F5F7F8; }
+
+        /* MODERN BUTTONS */
+        .btn-sm { padding: 8px 16px; border-radius: 8px; text-decoration: none; font-size: 12px; font-weight: 700; display: inline-block; margin-right: 5px; transition: 0.2s; }
+        .btn-approve { background-color: #E8F5E9; color: #2E7D32; border: 1px solid #C8E6C9; }
+        .btn-approve:hover { background-color: #2E7D32; color: white; }
+        .btn-reject { background-color: #FFEBEE; color: #C62828; border: 1px solid #FFCDD2; }
+        .btn-reject:hover { background-color: #C62828; color: white; }
+        .btn-view { background-color: #E3F2FD; color: #0277BD; border: 1px solid #BBDEFB; }
+        .btn-view:hover { background-color: #0277BD; color: white; }
+
+        /* SCROLLBAR */
         ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-thumb { background: #4CAF50; border-radius: 4px; }
-        ::-webkit-scrollbar-track { background: #F5F5F5; }
+        ::-webkit-scrollbar-thumb { background: #90A4AE; border-radius: 4px; }
+        ::-webkit-scrollbar-track { background: #ECEFF1; }
     </style>
 </head>
 <body>
@@ -87,41 +98,42 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
     <div id="sidebar">
         <div id="profile-header">
             <?php 
-            // Pulls the logo and name from the database!
             $sidebar_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'uploads/default_profile.png';
             $sidebar_bname = !empty($info['barangay_name']) ? 'Brgy. ' . $info['barangay_name'] : 'Barangay System';
+            $sidebar_municipal = !empty($info['municipal']) ? $info['municipal'] : 'Estancia';
+            $sidebar_city = !empty($info['city']) ? $info['city'] : 'Iloilo';
             ?>
             <img src="<?php echo $sidebar_logo; ?>" id="profile-pic" alt="Admin Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
             <div id="admin-name"><?php echo htmlspecialchars($sidebar_bname); ?></div>
-            <div style="font-size:11px; color:#aaa;">Admin: <?php echo htmlspecialchars($admin_data['full_name']); ?></div>
+            <div id="admin-location"><?php echo htmlspecialchars($sidebar_municipal . ', ' . $sidebar_city); ?></div>
         </div>
 
+        <div class="sidebar-menu-title">Menu</div>
         <div id="nav-menu">
-            <a href="admin_dashboard.php?view=dashboard">📊 Main Dashboard</a>
-            <a href="admin_dashboard.php?view=reports">🗑️ Waste Reports</a>
-            <a href="admin_dashboard.php?view=map">📍 GIS Master Map</a>
+            <a href="admin_dashboard.php?view=dashboard">📊 Dashboard</a>
+            <a href="admin_dashboard.php?view=reports">🗑️ Reports</a>
+            <a href="admin_dashboard.php?view=alert">📢 Basura Alert</a>
             
-            <a href="approve_resident.php" class="active">👥 Approve Residents</a>
-            <a href="print_report.php" target="_blank">🖨️ Print Monthly Report</a>
-            <a href="barangay_info.php">ℹ️ System Information</a>
+            <a href="approve_resident.php" class="active">👥 Residents</a>
+            <a href="barangay_info.php">ℹ️ System Info</a>
             <a href="logout.php" id="logout-link">🚪 Logout</a>
         </div>
     </div>
 
     <div id="main-content">
-        <div id="dashboard-header">
-            <h2 style="margin:0;">👥 Resident Management</h2>
-            <div style="font-size:14px; color:#777;">Review and manage app access</div>
+        <div class="page-header">
+            <h2 class="page-title">Resident Management</h2>
+            <span class="text-muted small" style="color: #78909C !important; font-weight: 500;">Review and manage app access</span>
         </div>
 
         <div class="tab-menu">
-            <button id="tab-pending" class="tab-btn active" onclick="switchResTab('pending')">⏳ Pending Approvals</button>
-            <button id="tab-active" class="tab-btn" onclick="switchResTab('active')">✅ Active Residents</button>
+            <button id="tab-pending" class="tab-btn active" onclick="switchResTab('pending')">Pending Approvals</button>
+            <button id="tab-active" class="tab-btn" onclick="switchResTab('active')">Active Residents</button>
         </div>
 
         <div id="section-pending" class="content-section" style="display: block;">
-            <h3 style="margin-top: 0; color: #333;">Residents Awaiting Approval</h3>
-            <p style="color: #666; font-size: 14px;">Please review the uploaded IDs before granting access to the system.</p>
+            <h3 style="margin-top: 0; color: #1B5E20; font-weight: 800; font-size: 18px;">Residents Awaiting Approval</h3>
+            <p style="color: #546E7A; font-size: 14px;">Please review the uploaded IDs before granting access to the system.</p>
             
             <table>
                 <tr>
@@ -136,9 +148,9 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                 if ($pending_query->num_rows > 0) {
                     while ($row = $pending_query->fetch_assoc()) {
                         echo "<tr>";
-                        echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                        echo "<td>" . htmlspecialchars($row['username']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['phone_number']) . "</td>";
+                        echo "<td><strong style='color: #263238;'>" . htmlspecialchars($row['full_name']) . "</strong></td>";
+                        echo "<td style='color: #455A64;'>" . htmlspecialchars($row['username']) . "</td>";
+                        echo "<td style='color: #455A64;'>" . htmlspecialchars($row['phone_number']) . "</td>";
                         echo "<td><a href='uploads/ids/" . htmlspecialchars($row['id_photo_path']) . "' target='_blank' class='btn-sm btn-view'>🖼️ View ID</a></td>";
                         echo "<td>
                                 <a href='approve_resident.php?action=approve&id=" . $row['user_id'] . "' class='btn-sm btn-approve' onclick=\"return confirm('Approve this resident?');\">Approve</a>
@@ -147,15 +159,15 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                         echo "</tr>";
                     }
                 } else {
-                    echo "<tr><td colspan='5' style='text-align: center; padding: 20px; color: #777;'>No pending approvals at the moment.</td></tr>";
+                    echo "<tr><td colspan='5' style='text-align: center; padding: 30px; color: #90A4AE; font-weight: 500;'>No pending approvals at the moment.</td></tr>";
                 }
                 ?>
             </table>
         </div>
 
         <div id="section-active" class="content-section">
-            <h3 style="margin-top: 0; color: #333;">Currently Active Residents</h3>
-            <p style="color: #666; font-size: 14px;">These residents have full access to submit waste reports and receive alerts.</p>
+            <h3 style="margin-top: 0; color: #1B5E20; font-weight: 800; font-size: 18px;">Currently Active Residents</h3>
+            <p style="color: #546E7A; font-size: 14px;">These residents have full access to submit waste reports and receive alerts.</p>
             
             <table>
                 <tr>
@@ -169,14 +181,14 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
                 if ($active_query->num_rows > 0) {
                     while ($row = $active_query->fetch_assoc()) {
                         echo "<tr>";
-                        echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                        echo "<td>" . htmlspecialchars($row['username']) . "</td>";
-                        echo "<td>" . htmlspecialchars($row['phone_number']) . "</td>";
-                        echo "<td><span style='color: #2E7D32; font-weight: bold;'>Approved</span></td>";
+                        echo "<td><strong style='color: #263238;'>" . htmlspecialchars($row['full_name']) . "</strong></td>";
+                        echo "<td style='color: #455A64;'>" . htmlspecialchars($row['username']) . "</td>";
+                        echo "<td style='color: #455A64;'>" . htmlspecialchars($row['phone_number']) . "</td>";
+                        echo "<td><span style='background-color: #E8F5E9; color: #2E7D32; padding: 6px 12px; border-radius: 6px; font-weight: 700; font-size: 12px; border: 1px solid #C8E6C9;'>Active</span></td>";
                         echo "</tr>";
                     }
                 } else {
-                    echo "<tr><td colspan='4' style='text-align: center; padding: 20px; color: #777;'>No active residents found.</td></tr>";
+                    echo "<tr><td colspan='4' style='text-align: center; padding: 30px; color: #90A4AE; font-weight: 500;'>No active residents found.</td></tr>";
                 }
                 ?>
             </table>
