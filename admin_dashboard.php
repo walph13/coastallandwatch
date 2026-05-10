@@ -53,6 +53,7 @@ while($row = $map_query->fetch_assoc()) {
 <!DOCTYPE html>
 <html>
 <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin Dashboard - Barangay Tanza GIS</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -136,9 +137,47 @@ while($row = $map_query->fetch_assoc()) {
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-thumb { background: #90A4AE; border-radius: 4px; }
         ::-webkit-scrollbar-track { background: #ECEFF1; }
+
+        @media (max-width: 768px) {
+            /* Hide sidebar off-screen */
+            #sidebar { left: -260px; position: fixed; z-index: 1000; }
+            /* Slide it in when active */
+            #sidebar.active { left: 0; box-shadow: 5px 0 20px rgba(0,0,0,0.5); }
+            
+            /* Expand main content to full width and prevent side-scrolling */
+            #main-content { margin-left: 0 !important; padding: 15px !important; width: 100%; overflow-x: hidden; }
+            
+            /* Stack header elements neatly */
+            .page-header { flex-direction: column; gap: 15px; align-items: flex-start !important; }
+            .page-header > div { width: 100%; }
+            
+            /* Make summary boxes full width */
+            .summary-box { min-width: 100%; margin-bottom: 15px; }
+            
+            /* Ensure tables scroll sideways instead of breaking the screen */
+            .dashboard-card { padding: 15px; }
+            table { display: block; overflow-x: auto; white-space: nowrap; }
+
+            /* 🔥 NEW FIX FOR SYSTEM INFO SQUISHING 🔥 */
+            /* Force side-by-side columns to stack neatly on phones */
+            #section-info .d-flex { flex-direction: column !important; }
+            #section-info .row { display: flex; flex-direction: column !important; margin: 0; }
+            #section-info .col-md-6, #section-info .col-md-4, #section-info .col-md-8 { 
+                width: 100% !important; 
+                max-width: 100% !important;
+                padding: 0 !important; 
+            }
+            #section-info .dashboard-card { width: 100% !important; margin-bottom: 20px; }
+            
+            /* Make sure the logo preview image shrinks properly */
+            #section-info img { max-width: 100% !important; height: auto !important; }
+        }
+
     </style>
 </head>
 <body>
+
+<div id="sidebar-overlay" onclick="toggleSidebar()"></div>
 
 <div id="sidebar">
         <div id="profile-header">
@@ -167,6 +206,10 @@ while($row = $map_query->fetch_assoc()) {
     </div>
 
     <div id="main-content">
+        <div class="d-md-none mb-4 rounded shadow-sm" style="background:#1B5E20; padding:12px 20px; display:flex; justify-content:space-between; align-items:center;">
+            <h5 class="m-0 fw-bold text-white">⚙️ Admin Menu</h5>
+            <button onclick="toggleSidebar()" style="background:none; border:none; color:white; font-size:28px; padding:0; cursor:pointer;">☰</button>
+        </div>
         <div class="page-header">
             <h2 id="page-title" class="page-title">📊 Dashboard</h2>
             <div style="font-size:14px; color:#546E7A; font-weight:700;">
@@ -222,11 +265,21 @@ while($row = $map_query->fetch_assoc()) {
                             <button id="filter-Cleaned" class="filter-btn" style="background-color: #ECEFF1; color: #546E7A; border: 1px solid #ccc; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; margin-left: 8px;" onclick="filterTable('Cleaned')">Cleaned</button>
                         </div>
                         
-                        <div style="margin-left: 10px; border-left: 2px solid #CFD8DC; padding-left: 15px;">
-                            <a href="print_report.php" target="_blank" class="btn-print">
-                                Print Report
-                            </a>
-                        </div>
+
+                        <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-4">
+            
+
+            <div class="d-flex flex-wrap gap-2 align-items-center">
+                
+                
+                <div class="vr d-none d-md-block mx-1" style="height: 30px; background-color: #CFD8DC;"></div>
+                
+                <a href="print_report.php" target="_blank" class="btn btn-custom-success shadow-sm flex-grow-1 flex-md-grow-0 d-flex justify-content-center align-items-center gap-2" style="background-color: #2E7D32; border: none; padding: 8px 16px; text-decoration: none; color: white;">
+                    🖨️ Print Report
+                </a>
+                
+            </div>
+        </div>
 
                     </div>
                 </div>
@@ -459,6 +512,14 @@ while($row = $map_query->fetch_assoc()) {
             var now = new Date();
             document.getElementById('liveClock').innerText = now.toLocaleTimeString();
         }, 1000);
+    </script>
+
+    <script>
+        // Toggle Sidebar for Mobile
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('active');
+            document.getElementById('sidebar-overlay').classList.toggle('active');
+        }
     </script>
 </body>
 </html>
