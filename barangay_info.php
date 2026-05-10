@@ -152,10 +152,29 @@ if (isset($_POST['update_info'])) {
         ::-webkit-scrollbar { width: 8px; }
         ::-webkit-scrollbar-thumb { background: #90A4AE; border-radius: 4px; }
         ::-webkit-scrollbar-track { background: #ECEFF1; }
+
+        /* ========================================= */
+        /* 📱 MOBILE RESPONSIVENESS                  */
+        /* ========================================= */
+        #sidebar { transition: 0.3s ease-in-out; }
+        #sidebar-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 999; }
+        #sidebar-overlay.active { display: block; }
+
+        @media (max-width: 768px) {
+            #sidebar { left: -260px; position: fixed; z-index: 1000; }
+            #sidebar.active { left: 0; box-shadow: 5px 0 20px rgba(0,0,0,0.5); }
+            #main-content { margin-left: 0 !important; padding: 15px !important; width: 100%; }
+            .page-header { flex-direction: column; gap: 15px; align-items: flex-start !important; }
+            .page-header > div { width: 100%; }
+            .dashboard-card { padding: 15px; }
+            table { display: block; overflow-x: auto; white-space: nowrap; }
+        }
+
     </style>
+    
 </head>
 <body>
-
+<div id="sidebar-overlay" onclick="toggleSidebar()"></div>
 <div id="sidebar">
     <div id="profile-header">
         <?php
@@ -183,7 +202,10 @@ if (isset($_POST['update_info'])) {
 </div>
 
 <div id="main-content">
-    
+    <div class="d-md-none mb-4 shadow-sm" style="background:#1B5E20; padding:15px 20px; display:flex; justify-content:space-between; align-items:center; border-radius: 8px;">
+            <h5 class="m-0 fw-bold text-white">⚙️ Admin Menu</h5>
+            <button onclick="toggleSidebar()" style="background:none; border:none; color:white; font-size:28px; padding:0; cursor:pointer;">☰</button>
+        </div>
     <div class="page-header">
         <h2 class="page-title">System Information</h2>
         <span class="text-muted small" style="color: #78909C !important; font-weight: 500;">Manage official barangay details</span>
@@ -330,5 +352,13 @@ if (isset($_POST['update_info'])) {
         }
     });
 </script>
+
+<script>
+        // Toggle Sidebar for Mobile
+        function toggleSidebar() {
+            document.getElementById('sidebar').classList.toggle('active');
+            document.getElementById('sidebar-overlay').classList.toggle('active');
+        }
+    </script>
 </body>
 </html>
