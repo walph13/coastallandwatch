@@ -31,45 +31,55 @@ while($row = $map_query->fetch_assoc()) {
     $map_data[] = $row;
 }
 
-// BACKEND LOGIC: Handle Waste Report Submission
-if (isset($_POST['submit_report'])) {
-    $description = $conn->real_escape_string($_POST['description']);
-    $lat = $conn->real_escape_string($_POST['latitude']);
-    $lng = $conn->real_escape_string($_POST['longitude']);
-    $status = 'Pending'; // All new reports start as Pending
+// BACKEND LOGIC: Handle Profile Updates
+if (isset($_POST['update_profile'])) {
+    $full_name = $conn->real_escape_string($_POST['full_name']);
+    $username = $conn->real_escape_string($_POST['username']);
+    $phone = $conn->real_escape_string($_POST['phone_number']);
+    $dob = $conn->real_escape_string($_POST['date_of_birth']);
+    $address = $conn->real_escape_string($_POST['address_purok_sitio']);
     
-    // Photo Upload Logic for the 'Before' picture
-    $photo_before = "";
-    if (!empty($_FILES['photo_before']['name'])) {
-        $target_dir = "uploads/reports/";
-        if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); } // Create folder if it doesn't exist
+    // NEW FIX: Check if the username is already taken by another account
+    $check_dup = $conn->query("SELECT user_id FROM users WHERE username = '$username' AND user_id != $resident_id");
+    
+    if ($check_dup->num_rows > 0) {
+        // If it is taken, show a friendly alert and stop the update
+        echo "<script>alert('Error: The username \"$username\" is already taken. Please choose a different one.'); window.location.href='resident_dashboard.php?view=profile';</script>";
+    } else {
+        // If it is NOT taken, proceed with the update!
         
-        $file_name = time() . "_" . basename($_FILES["photo_before"]["name"]);
-        $target_file = $target_dir . $file_name;
-        
-        $allowed_extensions = array("jpg", "jpeg", "png");
-        $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
-        
-        if (in_array($file_extension, $allowed_extensions)) {
-            if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
-                $photo_before = $file_name;
+        // Update password only if the user typed a new one
+        $password_sql = "";
+        if (!empty($_POST['password'])) {
+            $password = password_hash($conn->real_escape_string($_POST['password']), PASSWORD_DEFAULT);
+            $password_sql = ", password = '$password'";
+        }
+
+        // Photo Upload Logic
+        $photo_sql = "";
+        if (!empty($_FILES['profile_pic']['name'])) {
+            $target_dir = "uploads/profiles/";
+            if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
+            $file_name = time() . "_" . basename($_FILES["profile_pic"]["name"]);
+            $target_file = $target_dir . $file_name;
+            
+            $allowed_extensions = array("jpg", "jpeg", "png");
+            $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+            
+            if (in_array($file_extension, $allowed_extensions)) {
+                if (move_uploaded_file($_FILES["profile_pic"]["tmp_name"], $target_file)) {
+                    $photo_sql = ", profile_pic = '$file_name'";
+                }
             }
         }
-    }
 
-    // Ensure a photo was actually uploaded before saving to the database
-    if (!empty($photo_before)) {
-        $insert_query = "INSERT INTO waste_reports (resident_id, description, latitude, longitude, before_photo_path, status) 
-                         VALUES ('$resident_id', '$description', '$lat', '$lng', '$photo_before', '$status')";
+        $update_query = "UPDATE users SET full_name='$full_name', username='$username', phone_number='$phone', date_of_birth='$dob', address_purok_sitio='$address' $password_sql $photo_sql WHERE user_id=$resident_id";
         
-        if ($conn->query($insert_query)) {
-            // Success! Send them to the 'My Reports' tab to see it
-            echo "<script>alert('Waste report submitted successfully!'); window.location.href='resident_dashboard.php?view=history';</script>";
+        if ($conn->query($update_query)) {
+            echo "<script>alert('Profile updated successfully!'); window.location.href='resident_dashboard.php?view=profile';</script>";
         } else {
-            echo "<script>alert('Database Error: Could not save the report.');</script>";
+            echo "<script>alert('Error updating profile.'); window.location.href='resident_dashboard.php?view=profile';</script>";
         }
-    } else {
-        echo "<script>alert('Error: Please upload a valid image file (JPG, JPEG, or PNG).');</script>";
     }
 }
 ?>
