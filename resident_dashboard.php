@@ -75,6 +75,48 @@ if (isset($_POST['update_profile'])) {
         }
     }
 }
+
+// BACKEND LOGIC: Handle Waste Report Submission
+if (isset($_POST['submit_report'])) {
+    $description = $conn->real_escape_string($_POST['description']);
+    $lat = $conn->real_escape_string($_POST['latitude']);
+    $lng = $conn->real_escape_string($_POST['longitude']);
+    $status = 'Pending'; // All new reports start as Pending
+    
+    // Photo Upload Logic for the 'Before' picture
+    $photo_before = "";
+    if (!empty($_FILES['photo_before']['name'])) {
+        $target_dir = "uploads/reports/";
+        if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); } // Create folder if it doesn't exist
+        
+        $file_name = time() . "_" . basename($_FILES["photo_before"]["name"]);
+        $target_file = $target_dir . $file_name;
+        
+        $allowed_extensions = array("jpg", "jpeg", "png");
+        $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+        
+        if (in_array($file_extension, $allowed_extensions)) {
+            if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
+                $photo_before = $file_name;
+            }
+        }
+    }
+
+    // Ensure a photo was actually uploaded before saving to the database
+    if (!empty($photo_before)) {
+        $insert_query = "INSERT INTO waste_reports (resident_id, description, latitude, longitude, before_photo_path, status) 
+                         VALUES ('$resident_id', '$description', '$lat', '$lng', '$photo_before', '$status')";
+        
+        if ($conn->query($insert_query)) {
+            // Success! Send them to the 'My Reports' tab to see it
+            echo "<script>alert('Waste report submitted successfully!'); window.location.href='resident_dashboard.php?view=history';</script>";
+        } else {
+            echo "<script>alert('Database Error: Could not save the report.');</script>";
+        }
+    } else {
+        echo "<script>alert('Error: Please upload a valid image file (JPG, JPEG, or PNG).');</script>";
+    }
+}
 ?>
 
 <!DOCTYPE html>
@@ -341,6 +383,13 @@ if (isset($_POST['update_profile'])) {
                     <div class="table-responsive">
                         <table>
                             <thead>
+                                <tr>
+                                    <th>Description</th>
+                                    <th>Location</th>
+                                    <th>Photos</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
                             <tbody>
                                 <?php
                                 $history_query = "SELECT * FROM waste_reports WHERE resident_id = $resident_id ORDER BY status ASC, report_id DESC";
