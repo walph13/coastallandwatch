@@ -527,11 +527,12 @@ while($row = $map_query->fetch_assoc()) {
             let rows = document.querySelectorAll('.report-row');
             
             rows.forEach(row => {
-                let reporterName = row.querySelector('.reporter-name').innerText.toLowerCase();
-                let description = row.querySelector('.report-desc').innerText.toLowerCase();
+                // BULLETPROOF FIX: Get ALL the text inside the entire row at once
+                let rowText = row.innerText.toLowerCase();
                 let rowStatus = row.getAttribute('data-status');
                 
-                let matchesSearch = reporterName.includes(searchText) || description.includes(searchText);
+                // Check if the search text exists anywhere inside the row's text
+                let matchesSearch = rowText.includes(searchText);
                 let matchesStatus = (currentStatusFilter === 'All') || (rowStatus === currentStatusFilter);
                 
                 if (matchesSearch && matchesStatus) {
