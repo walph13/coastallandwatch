@@ -198,7 +198,6 @@ while($row = $map_query->fetch_assoc()) {
         <div id="nav-menu">
             <a href="admin_dashboard.php?view=dashboard" id="tab-dashboard" class="<?php echo ($current_view == 'dashboard' || empty($_GET['view'])) ? 'active' : ''; ?>">📊 Dashboard</a>
             <a href="admin_dashboard.php?view=reports" id="tab-reports" class="<?php echo ($current_view == 'reports') ? 'active' : ''; ?>">🗑️ Reports</a>
-            <a href="admin_dashboard.php?view=alert" id="tab-alert" class="<?php echo ($current_view == 'alert') ? 'active' : ''; ?>">📢 Basura Alert</a>
             <a href="approve_resident.php">👥 Residents</a>
             <a href="barangay_info.php">ℹ️ System Info</a>
             <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out?');">🚪 Logout</a>
@@ -211,9 +210,47 @@ while($row = $map_query->fetch_assoc()) {
             <button onclick="toggleSidebar()" style="background:none; border:none; color:white; font-size:28px; padding:0; cursor:pointer;">☰</button>
         </div>
         <div class="page-header">
-            <h2 id="page-title" class="page-title">📊 Dashboard</h2>
-            <div style="font-size:14px; color:#546E7A; font-weight:700;">
-                📅 <?php echo date('M d, Y'); ?>  |  🕒 <span id="liveClock"></span>
+            <div>
+                <h2 id="page-title" class="page-title">📊 Admin Dashboard</h2>
+                <p class="text-muted fw-bold mb-0" style="color: #78909C !important;">Welcome, Barangay Secretary!</p>
+            </div>
+            <div style="display: flex; align-items: center; gap: 20px;">
+                <div class="d-none d-md-block" style="font-size:14px; color:#546E7A; font-weight:700;">
+                    📅 <?php echo date('M d, Y'); ?>
+                </div>
+                
+                <div style="position: relative;">
+                    <button id="adminNotifBtn" class="btn-custom-primary position-relative" style="padding: 10px 18px; font-size: 14px; background-color: #D32F2F;">
+                        🔔 New Reports
+                        <?php
+                        // Get total pending reports (We pass this to JavaScript below)
+                        $pending_check = $conn->query("SELECT COUNT(*) as c FROM waste_reports WHERE status = 'Pending'")->fetch_assoc();
+                        $total_pending = $pending_check['c'] ? $pending_check['c'] : 0;
+                        ?>
+                        <span id="notifBadge" class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-warning text-dark shadow-sm" style="font-size: 12px; display: none;"></span>
+                    </button>
+
+                    <div id="adminNotifBox" class="dashboard-card p-0" style="display: none; position: absolute; top: 50px; right: 0; min-width: 350px; z-index: 1050; border: 1px solid #CFD8DC; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+                        <div class="card-header-custom bg-danger text-white p-3 m-0" style="border-radius: 16px 16px 0 0; color: #fff !important;">Needs Action</div>
+                        <div class="list-group list-group-flush max-height-300" style="max-height: 350px; overflow-y: auto;">
+                            <?php
+                            $recent_reports = $conn->query("SELECT w.*, u.username FROM waste_reports w JOIN users u ON w.resident_id = u.user_id WHERE w.status = 'Pending' ORDER BY w.created_at DESC LIMIT 5");
+                            
+                            if ($recent_reports->num_rows > 0) {
+                                while($notif = $recent_reports->fetch_assoc()) {
+                                    echo "<div class='list-group-item' style='background-color: #FFF8E1; border-left: 4px solid #FFC107; padding: 15px; border-bottom: 1px solid #ECEFF1;'>";
+                                    echo "<strong class='d-block mb-1' style='color: #D32F2F;'>🚨 New Report from " . htmlspecialchars($notif['username']) . "</strong>";
+                                    echo "<span class='small' style='color: #5D4037;'>\"" . htmlspecialchars($notif['description']) . "\"</span>";
+                                    echo "<br><small class='text-muted' style='font-size: 11px;'>" . date("M d, Y h:i A", strtotime($notif['created_at'])) . "</small>";
+                                    echo "</div>";
+                                }
+                            } else {
+                                echo "<div class='list-group-item text-center p-4' style='color: #90A4AE; font-weight: 500;'>No pending reports! All clear.</div>";
+                            }
+                            ?>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -413,8 +450,6 @@ while($row = $map_query->fetch_assoc()) {
                 setTimeout(function() { mapDash.invalidateSize(); }, 200);
             } else if (tabName === 'reports') {
                 document.getElementById('page-title').innerText = "Reports";
-            } else if (tabName === 'alert') {
-                document.getElementById('page-title').innerText = "Basura Alert";
             }
         }
 
@@ -521,5 +556,46 @@ while($row = $map_query->fetch_assoc()) {
             document.getElementById('sidebar-overlay').classList.toggle('active');
         }
     </script>
+
+    <script>
+        // SMART NOTIFICATION LOGIC (Using LocalStorage so we don't need a DB table!)
+        let totalPending = <?php echo $total_pending; ?>;
+        
+        // Get the number of reports the admin has already seen from LocalStorage
+        let seenPending = localStorage.getItem('seenPendingCount');
+        if (!seenPending) { seenPending = 0; }
+        
+        // If admin resolved a report, total pending goes down. Adjust the seen count automatically.
+        if (totalPending < seenPending) {
+            localStorage.setItem('seenPendingCount', totalPending);
+            seenPending = totalPending;
+        }
+
+        let notifBadge = document.getElementById("notifBadge");
+        let newReportsCount = totalPending - seenPending;
+        
+        // If there are NEW reports, show the badge with the new count
+        if (newReportsCount > 0) {
+            notifBadge.innerText = newReportsCount;
+            notifBadge.style.display = "inline-block";
+        }
+
+        // Toggle Admin Notification Box AND Hide Badge on Click
+        var adminNotifBtn = document.getElementById("adminNotifBtn");
+        if(adminNotifBtn) {
+            adminNotifBtn.onclick = function() {
+                var box = document.getElementById("adminNotifBox");
+                box.style.display = (box.style.display === "none" || box.style.display === "") ? "block" : "none";
+                
+                // When clicked, hide the badge and update localStorage so they are marked as "seen"
+                if (newReportsCount > 0) {
+                    notifBadge.style.display = "none";
+                    localStorage.setItem('seenPendingCount', totalPending);
+                    newReportsCount = 0; // Reset
+                }
+            }
+        }
+    </script>
+
 </body>
 </html>
