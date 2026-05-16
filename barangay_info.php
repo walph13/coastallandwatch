@@ -192,9 +192,7 @@ if (isset($_POST['update_info'])) {
     <div class="sidebar-menu-title">Menu</div>
     <div id="nav-menu">
         <a href="admin_dashboard.php?view=dashboard">📊 Dashboard</a>
-        <a href="admin_dashboard.php?view=reports">🗑️ Reports</a>
-        <a href="admin_dashboard.php?view=alert">📢 Basura Alert</a>
-        
+        <a href="admin_dashboard.php?view=reports">🗑️ Reports</a>  
         <a href="approve_resident.php">👥 Residents</a>
         <a href="barangay_info.php" class="active">ℹ️ System Info</a>
         <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out?');">🚪 Logout</a>
