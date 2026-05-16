@@ -31,36 +31,45 @@ while($row = $map_query->fetch_assoc()) {
     $map_data[] = $row;
 }
 
-// BACKEND LOGIC: Handle the Waste Report Submission (Only if Approved)
-if (isset($_POST['submit_report']) && $account_status === 'Approved') {
-    $description = $_POST['description'];
-    $lat = $_POST['latitude'];
-    $lng = $_POST['longitude'];
+// BACKEND LOGIC: Handle Waste Report Submission
+if (isset($_POST['submit_report'])) {
+    $description = $conn->real_escape_string($_POST['description']);
+    $lat = $conn->real_escape_string($_POST['latitude']);
+    $lng = $conn->real_escape_string($_POST['longitude']);
+    $status = 'Pending'; // All new reports start as Pending
     
-    $target_dir = "uploads/reports/";
-    if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
-    
-    $file_name = time() . "_" . basename($_FILES["photo_before"]["name"]);
-    $target_file = $target_dir . $file_name;
-
-    $allowed_extensions = array("jpg", "jpeg", "png");
-    $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
-
-    if (!in_array($file_extension, $allowed_extensions)) {
-        echo "<script>alert('Security Alert: Only JPG, JPEG, and PNG image files are allowed!'); window.location.href='resident_dashboard.php?view=report';</script>";
-    } else {
-        if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
-            $sql = "INSERT INTO waste_reports (resident_id, latitude, longitude, description, before_photo_path, status) 
-                    VALUES (?, ?, ?, ?, ?, 'Pending')";
-            $stmt = $conn->prepare($sql);
-            $stmt->bind_param("iddss", $resident_id, $lat, $lng, $description, $file_name);
-            
-            if ($stmt->execute()) {
-                echo "<script>alert('Waste report submitted successfully!'); window.location.href='resident_dashboard.php?view=history';</script>";
-            } else {
-                echo "<script>alert('Error submitting report.');</script>";
+    // Photo Upload Logic for the 'Before' picture
+    $photo_before = "";
+    if (!empty($_FILES['photo_before']['name'])) {
+        $target_dir = "uploads/reports/";
+        if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); } // Create folder if it doesn't exist
+        
+        $file_name = time() . "_" . basename($_FILES["photo_before"]["name"]);
+        $target_file = $target_dir . $file_name;
+        
+        $allowed_extensions = array("jpg", "jpeg", "png");
+        $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
+        
+        if (in_array($file_extension, $allowed_extensions)) {
+            if (move_uploaded_file($_FILES["photo_before"]["tmp_name"], $target_file)) {
+                $photo_before = $file_name;
             }
         }
+    }
+
+    // Ensure a photo was actually uploaded before saving to the database
+    if (!empty($photo_before)) {
+        $insert_query = "INSERT INTO waste_reports (resident_id, description, latitude, longitude, before_photo_path, status) 
+                         VALUES ('$resident_id', '$description', '$lat', '$lng', '$photo_before', '$status')";
+        
+        if ($conn->query($insert_query)) {
+            // Success! Send them to the 'My Reports' tab to see it
+            echo "<script>alert('Waste report submitted successfully!'); window.location.href='resident_dashboard.php?view=history';</script>";
+        } else {
+            echo "<script>alert('Database Error: Could not save the report.');</script>";
+        }
+    } else {
+        echo "<script>alert('Error: Please upload a valid image file (JPG, JPEG, or PNG).');</script>";
     }
 }
 ?>
@@ -152,10 +161,11 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
     <div id="sidebar">
         <div id="profile-header">
             <?php 
-            $sidebar_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'tanzalogo.jpg';
+            // Now fetches the Resident's Profile Picture instead of the Barangay Logo
+            $user_pic = !empty($resident_data['profile_pic']) ? 'uploads/profiles/' . $resident_data['profile_pic'] : 'https://cdn-icons-png.flaticon.com/512/149/149071.png';
             $current_view = isset($_GET['view']) ? $_GET['view'] : 'dashboard';
             ?>
-            <img src="<?php echo htmlspecialchars($sidebar_logo); ?>" id="profile-pic" alt="Barangay Logo" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
+            <img src="<?php echo htmlspecialchars($user_pic); ?>" id="profile-pic" alt="User Profile" onerror="this.src='https://cdn-icons-png.flaticon.com/512/149/149071.png'">
             <div id="resident-name"><?php echo htmlspecialchars($resident_data['username']); ?></div>
             <div id="resident-role">Approved Resident</div>
         </div>
@@ -167,6 +177,9 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
             <a href="resident_dashboard.php?view=history" id="tab-history" class="<?php echo ($current_view == 'history') ? 'active' : ''; ?>">📝 My Reports</a>
             <a href="resident_dashboard.php?view=community" id="tab-community" class="<?php echo ($current_view == 'community') ? 'active' : ''; ?>">🌟 Community Feed</a>
             <a href="resident_dashboard.php?view=info" id="tab-info" class="<?php echo ($current_view == 'info') ? 'active' : ''; ?>">📞 Emergency Info</a>
+            
+            <a href="resident_dashboard.php?view=profile" id="tab-profile" class="<?php echo ($current_view == 'profile') ? 'active' : ''; ?>">👤 My Profile</a>
+            
             <a href="logout.php" id="logout-link" onclick="return confirm('Are you sure you want to log out?');">🚪 Logout</a>
         </div>
     </div>
@@ -179,53 +192,58 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                 <p class="text-muted fw-bold mb-0" style="color: #78909C !important;">Welcome back, <?php echo htmlspecialchars($resident_data['username']); ?>!</p>
             </div>
             <div style="display: flex; align-items: center; gap: 20px;">
-                <div style="font-size:14px; color:#546E7A; font-weight:700;">
+                <div class="d-none d-md-block" style="font-size:14px; color:#546E7A; font-weight:700;">
                     📅 <?php echo date('M d, Y'); ?>  |  🕒 <span id="liveClock"></span>
                 </div>
+            </div>
+        </div>
+
+        <div id="section-profile" class="content-section" style="display: none;">
+            <div class="dashboard-card border-left-green" style="padding: 40px;">
+                <h4 style="color: #1B5E20; font-weight: 800; margin-bottom: 25px;">👤 Edit Profile Details</h4>
                 
-                <div style="position: relative;">
-                    <button id="notifBtn" class="btn-custom-primary position-relative" style="padding: 10px 18px; font-size: 14px;">
-                        🔔 Notifications
-                        <?php
-                        $alerts_check = $conn->query("SELECT COUNT(*) as c FROM basura_alerts")->fetch_assoc();
-                        if($alerts_check['c'] > 0) {
-                            echo '<span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger shadow-sm">New</span>';
-                        }
-                        ?>
-                    </button>
-
-                    <div id="notifBox" class="dashboard-card p-0" style="display: none; position: absolute; top: 50px; right: 0; min-width: 380px; z-index: 1050; border: 1px solid #CFD8DC; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
-                        <div class="card-header-custom bg-dark text-white p-3 m-0" style="border-radius: 16px 16px 0 0; color: #fff !important;">Recent Updates</div>
-                        <div class="list-group list-group-flush max-height-300" style="max-height: 350px; overflow-y: auto;">
-                            <?php
-                            $alerts = $conn->query("SELECT * FROM basura_alerts ORDER BY sent_at DESC LIMIT 3");
-                            if ($alerts->num_rows > 0) {
-                                while($alert = $alerts->fetch_assoc()) {
-                                    echo "<div class='list-group-item' style='background-color: #FFF8E1; border-left: 4px solid #FFC107; padding: 15px; border-bottom: 1px solid #ECEFF1;'>";
-                                    echo "<strong class='d-block mb-1' style='color: #F57F17;'>📢 Truck Alert: " . $alert['purok_area'] . "</strong>";
-                                    echo "<span class='small' style='color: #5D4037;'>" . $alert['message'] . "</span>";
-                                    echo "<br><small class='text-muted' style='font-size: 11px;'>" . date("M d, Y h:i A", strtotime($alert['sent_at'])) . "</small>";
-                                    echo "</div>";
-                                }
-                            }
-
-                            $cleaned = $conn->query("SELECT * FROM waste_reports WHERE resident_id = $resident_id AND status = 'Cleaned' ORDER BY created_at DESC LIMIT 3");
-                            if ($cleaned->num_rows > 0) {
-                                while($clean = $cleaned->fetch_assoc()) {
-                                    echo "<div class='list-group-item' style='background-color: #E8F5E9; border-left: 4px solid #4CAF50; padding: 15px; border-bottom: 1px solid #ECEFF1;'>";
-                                    echo "<strong class='d-block mb-1' style='color: #2E7D32;'>✅ Report Cleaned!</strong>";
-                                    echo "<span class='small' style='color: #1B5E20;'>Your report at <b>" . htmlspecialchars($clean['description']) . "</b> has been resolved.</span>";
-                                    echo "</div>";
-                                }
-                            }
-
-                            if ($alerts->num_rows == 0 && $cleaned->num_rows == 0) {
-                                echo "<div class='list-group-item text-center p-4' style='color: #90A4AE; font-weight: 500;'>No new notifications.</div>";
-                            }
-                            ?>
+                <form action="resident_dashboard.php" method="POST" enctype="multipart/form-data" onsubmit="return confirm('Are you sure you want to submit this waste report? Please make sure your photo and location are correct.');">
+                    <div class="row">
+                        <div class="col-md-4 text-center mb-4">
+                            <img id="editProfilePreview" src="<?php echo htmlspecialchars($user_pic); ?>" style="width: 150px; height: 150px; border-radius: 50%; object-fit: cover; border: 4px solid #CFD8DC; margin-bottom: 15px;">
+                            <label class="form-label d-block text-muted">Change Profile Picture (Optional)</label>
+                            <input class="form-control form-control-sm" type="file" name="profile_pic" accept=".jpg,.jpeg,.png" onchange="document.getElementById('editProfilePreview').src = window.URL.createObjectURL(this.files[0])">
+                        </div>
+                        
+                        <div class="col-md-8">
+                            <div class="row">
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Full Name</label>
+                                    <input type="text" name="full_name" class="form-control" value="<?php echo htmlspecialchars($resident_data['full_name'] ?? ''); ?>" placeholder="E.g. Juan Dela Cruz">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Username</label>
+                                    <input type="text" name="username" class="form-control" value="<?php echo htmlspecialchars($resident_data['username']); ?>" required>
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Phone Number</label>
+                                    <input type="text" name="phone_number" class="form-control" value="<?php echo htmlspecialchars($resident_data['phone_number'] ?? ''); ?>" placeholder="09XXXXXXXXX">
+                                </div>
+                                <div class="col-md-6 mb-3">
+                                    <label class="form-label">Date of Birth</label>
+                                    <input type="date" name="date_of_birth" class="form-control" value="<?php echo htmlspecialchars($resident_data['date_of_birth'] ?? ''); ?>">
+                                </div>
+                                <div class="col-md-12 mb-3">
+                                    <label class="form-label">Complete Address</label>
+                                    <input type="text" name="address_purok_sitio" class="form-control" value="<?php echo htmlspecialchars($resident_data['address_purok_sitio'] ?? ''); ?>" placeholder="Sitio, Street, etc.">
+                                </div>
+                                <div class="col-md-12 mb-4">
+                                    <label class="form-label">New Password (Leave blank to keep current password)</label>
+                                    <input type="password" name="password" class="form-control" placeholder="••••••••">
+                                </div>
+                            </div>
+                            
+                            <button type="submit" name="update_profile" class="btn-custom-success w-100 py-3 fs-5">
+                                Save Profile Changes
+                            </button>
                         </div>
                     </div>
-                </div>
+                </form>
             </div>
         </div>
 
@@ -263,7 +281,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                 </div>
                 
                 <div class="dashboard-card" style="padding: 25px;">
-                    <h3 style="margin-top: 0; color:#1B5E20; font-weight: 800; font-size: 18px;">Community Waste Map 📍</h3>
+                    <h3 style="margin-top: 0; color:#1B5E20; font-weight: 800; font-size: 18px;">Community Waste Map</h3>
                     <p style="color: #546E7A; font-size: 14px;">See all reported waste and cleaned areas across the barangay.</p>
                     <div id="communityMap" style="height: 400px; width: 100%; border-radius: 12px; border: 1px solid #CFD8DC; z-index: 1;"></div>
                 </div>
@@ -278,7 +296,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                 </div>
             <?php else: ?>
                 <div class="dashboard-card border-left-green" style="padding: 40px;">
-                    <h4 style="color: #1B5E20; font-weight: 800; margin-bottom: 25px;">📍 Reporting Station</h4>
+                    <h4 style="color: #1B5E20; font-weight: 800; margin-bottom: 25px;">Reporting Station</h4>
                     
                     <form action="resident_dashboard.php" method="POST" enctype="multipart/form-data">
                         <div class="mb-4">
@@ -304,17 +322,17 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                         
                         <div id="pinMap" style="height: 400px; width: 100%; border-radius: 12px; border: 1px solid #CFD8DC; z-index: 1; margin-bottom: 25px;"></div>
                         
-                        <button type="submit" name="submit_report" id="submit_btn" class="btn-custom-success w-100 py-3 fs-5" disabled>
-                            Submit Report to Barangay
-                        </button>
+                        <button type="submit" name="submit_report" id="submit_btn" class="btn-custom-success w-100 py-3 fs-5" disabled onclick="return confirm('Are you sure you want to submit this waste report? Please double-check your photo and map location.');">
+    Submit Report to Barangay
+</button>
                     </form>
                 </div>
             <?php endif; ?>
         </div>
 
         <div id="section-history" class="content-section" style="display: none;">
-            <div class="dashboard-card border-left-blue">
-                <div class="card-header-custom">My Reported Waste History</div>
+            <div class="dashboard-card border-left-green" style="padding: 40px;">
+                <h4 style="color: #1B5E20; font-weight: 800; margin-bottom: 25px;">My Reported Waste History</h4>
                 
                 <?php if ($account_status === 'Pending'): ?>
                     <div class="alert alert-light text-center" style="color: #90A4AE; font-weight: 500; border: 1px dashed #CFD8DC;">
@@ -324,13 +342,6 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                     <div class="table-responsive">
                         <table>
                             <thead>
-                                <tr>
-                                    <th>Description</th>
-                                    <th>Location</th>
-                                    <th>Photo Evidence</th>
-                                    <th>Status</th>
-                                </tr>
-                            </thead>
                             <tbody>
                                 <?php
                                 $history_query = "SELECT * FROM waste_reports WHERE resident_id = $resident_id ORDER BY status ASC, report_id DESC";
@@ -369,7 +380,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
 
         <div id="section-community" class="content-section" style="display: none;">
             <div class="d-flex justify-content-between align-items-center mb-4">
-                <h4 class="page-title mb-0" style="color: #1B5E20;">🌟 Community Clean-ups</h4>
+                <h4 class="page-title mb-0" style="color: #1B5E20;">Community Clean-ups</h4>
                 <p class="fw-bold mb-0" style="color: #78909C !important;">See how Barangay Tanza is taking action!</p>
             </div>
 
@@ -410,18 +421,20 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
         </div>
 
         <div id="section-info" class="content-section" style="display: none;">
-            <div class="row">
-                <div class="col-md-6">
-                    <div class="dashboard-card border-left-blue">
-                        <h4 style="color: #1E88E5; font-weight: 800; margin-bottom: 20px;">📞 Emergency Hotlines</h4>
+            <div class="row align-items-stretch">
+                
+                <div class="col-md-6 mb-4">
+                    <div class="dashboard-card border-left-red" style="padding: 35px; height: 100%;">
+                        <h4 style="color: #C62828; font-weight: 800; margin-bottom: 20px;">Emergency Hotlines</h4>
                         <p style="font-size: 15px; color: #455A64; line-height: 1.8;">
                             <?php echo nl2br(htmlspecialchars($info['emergency_hotlines'])); ?>
                         </p>
                     </div>
                 </div>
-                <div class="col-md-6">
-                    <div class="dashboard-card border-left-green">
-                        <h4 style="color: #2E7D32; font-weight: 800; margin-bottom: 20px;">🏛️ Barangay Information</h4>
+
+                <div class="col-md-6 mb-4">
+                    <div class="dashboard-card border-left-green" style="padding: 35px; height: 100%;">
+                        <h4 style="color: #1B5E20; font-weight: 800; margin-bottom: 20px;">Barangay Information</h4>
                         <ul style="list-style: none; padding: 0; color: #455A64; line-height: 2;">
                             <li><strong>Punong Barangay:</strong> <?php echo htmlspecialchars($info['captain_name']); ?></li>
                             <li><strong>Barangay Secretary:</strong> <?php echo htmlspecialchars($info['secretary_name']); ?></li>
@@ -430,6 +443,7 @@ if (isset($_POST['submit_report']) && $account_status === 'Approved') {
                         </ul>
                     </div>
                 </div>
+
             </div>
         </div>
 
