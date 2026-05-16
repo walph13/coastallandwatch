@@ -47,13 +47,6 @@ if (isset($_POST['update_profile'])) {
         echo "<script>alert('Error: The username \"$username\" is already taken. Please choose a different one.'); window.location.href='resident_dashboard.php?view=profile';</script>";
     } else {
         // If it is NOT taken, proceed with the update!
-        
-        // Update password only if the user typed a new one
-        $password_sql = "";
-        if (!empty($_POST['password'])) {
-            $password = password_hash($conn->real_escape_string($_POST['password']), PASSWORD_DEFAULT);
-            $password_sql = ", password = '$password'";
-        }
 
         // Photo Upload Logic
         $photo_sql = "";
@@ -73,7 +66,7 @@ if (isset($_POST['update_profile'])) {
             }
         }
 
-        $update_query = "UPDATE users SET full_name='$full_name', username='$username', phone_number='$phone', date_of_birth='$dob', address_purok_sitio='$address' $password_sql $photo_sql WHERE user_id=$resident_id";
+        $update_query = "UPDATE users SET full_name='$full_name', username='$username', phone_number='$phone', date_of_birth='$dob', address_purok_sitio='$address' $photo_sql WHERE user_id=$resident_id";
         
         if ($conn->query($update_query)) {
             echo "<script>alert('Profile updated successfully!'); window.location.href='resident_dashboard.php?view=profile';</script>";
@@ -241,10 +234,6 @@ if (isset($_POST['update_profile'])) {
                                 <div class="col-md-12 mb-3">
                                     <label class="form-label">Complete Address</label>
                                     <input type="text" name="address_purok_sitio" class="form-control" value="<?php echo htmlspecialchars($resident_data['address_purok_sitio'] ?? ''); ?>" placeholder="Sitio, Street, etc.">
-                                </div>
-                                <div class="col-md-12 mb-4">
-                                    <label class="form-label">New Password (Leave blank to keep current password)</label>
-                                    <input type="password" name="password" class="form-control" placeholder="••••••••">
                                 </div>
                             </div>
                             
