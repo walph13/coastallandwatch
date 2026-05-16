@@ -133,8 +133,6 @@ if (isset($_GET['action']) && isset($_GET['id'])) {
         <div id="nav-menu">
             <a href="admin_dashboard.php?view=dashboard">📊 Dashboard</a>
             <a href="admin_dashboard.php?view=reports">🗑️ Reports</a>
-            <a href="admin_dashboard.php?view=alert">📢 Basura Alert</a>
-            
             <a href="approve_resident.php" class="active">👥 Residents</a>
             <a href="barangay_info.php">ℹ️ System Info</a>
             <a href="logout.php" id="logout-link">🚪 Logout</a>
