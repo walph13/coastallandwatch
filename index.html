@@ -1,4 +1,707 @@
-<?php
-header("Location: login.php");
-exit();
-?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Coastal Land Watch App</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+ 
+    <style>
+      /* ============================================
+           MODERN iOS "PILL & BUBBLE" DESIGN
+        ============================================= */
+        :root {
+            --bg-color: #f5f6f7;         /* New Light Gray Background */
+            --card-white: #ffffff;       /* Pure White Cards */
+            --text-dark: #212529;        /* New Dark Charcoal Accent/Text */
+            --text-gray: #8e8e93;        /* Muted subtitle gray */
+            --border-light: #e5e5ea;     /* Very subtle borders */
+        }
+
+        body { 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            
+            /* 🌟 THE NEW AMBIENT MESH BACKGROUND */
+            background-color: #f5f6f7; /* Base gray */
+            background-image: 
+                radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),   /* Soft Coastal Blue glow (Top Left) */
+                radial-gradient(circle at 100% 0%, rgba(217, 250, 74, 0.25) 0%, transparent 45%), /* Soft Lime glow (Top Right) */
+                radial-gradient(circle at 50% 100%, rgba(0, 0, 0, 0.02) 0%, transparent 50%);     /* Faint shadow at bottom */
+            background-attachment: fixed; /* Locks the glow in place so it doesn't move when you scroll */
+            
+            margin: 0; padding: 0; overscroll-behavior-y: none; overflow-x: hidden;
+            padding-bottom: 120px; /* Extra space for the floating nav */
+            color: var(--text-dark);
+        }
+
+        .content-section { display: none; }
+
+        /* 🌟 TOP BAR (Matches the "Hello, Vanessa" clean header) */
+        .top-bar {
+            padding: 60px 24px 20px; 
+            margin-bottom: 10px;
+        }
+        
+        .top-bar h2, .top-bar #home_greeting { 
+            margin: 0; 
+            font-size: 32px; 
+            font-weight: 700; 
+            color: var(--text-dark); 
+            letter-spacing: -0.5px; 
+            line-height: 1.2;
+        }
+        
+        .top-bar p { 
+            margin: 6px 0 0; 
+            font-size: 15px; 
+            color: var(--text-gray); 
+            font-weight: 500; 
+        }
+
+        .body-container { padding: 0 24px; }
+
+        /* 🃏 CLEAN BORDERLESS CARDS */
+        .card {
+            background: var(--card-white);
+            border-radius: 28px;
+            padding: 24px;
+            margin-bottom: 16px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03); /* Super soft shadow */
+            border: none;
+            transition: transform 0.2s ease;
+        }
+        .card:active { transform: scale(0.98); }
+        .card-title { font-size: 20px; font-weight: 600; color: var(--text-dark); margin: 0 0 6px; letter-spacing: -0.5px; }
+        .card-sub { font-size: 15px; color: var(--text-gray); margin: 0; line-height: 1.5; font-weight: 400; }
+        
+        .section-title { font-size: 18px; font-weight: 600; color: var(--text-dark); margin: 28px 0 16px; letter-spacing: -0.3px; }
+
+        /* 🔘 PILL BUTTONS (Matching the "South America" active tab) */
+        .btn-primary {
+            background: var(--text-dark);
+            color: var(--card-white);
+            border: none;
+            border-radius: 40px; /* Heavy pill shape */
+            padding: 18px 24px;
+            width: 100%;
+            font-size: 16px;
+            font-weight: 600;
+            text-align: center;
+            margin-bottom: 15px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            box-shadow: 0 8px 20px rgba(33, 37, 41, 0.15); 
+            transition: 0.2s;
+        }
+        .btn-primary:active { transform: scale(0.96); box-shadow: 0 4px 10px rgba(33, 37, 41, 0.1); }
+        
+        /* 🔘 INACTIVE PILL TABS (Matching the "Asia / Europe" inactive tabs) */
+        .btn-outline {
+            background: var(--card-white);
+            color: var(--text-dark);
+            border: none;
+            border-radius: 40px;
+            padding: 16px;
+            width: 100%;
+            font-size: 15px;
+            font-weight: 500;
+            text-align: center;
+            margin-bottom: 15px;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
+            transition: 0.2s;
+        }
+        .btn-outline:active { background: #e5e5ea; }
+
+        /* 📝 ROUNDED INPUT FIELDS */
+        .input-label { font-size: 15px; font-weight: 600; color: var(--text-dark); margin: 0 0 10px; display: block; }
+        .input-field {
+            background: var(--card-white);
+            border: 1px solid var(--border-light);
+            border-radius: 20px;
+            padding: 18px;
+            font-size: 16px;
+            color: var(--text-dark);
+            width: 100%;
+            box-sizing: border-box;
+            margin-bottom: 24px;
+            outline: none;
+            transition: 0.2s;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.01);
+        }
+        .input-field:focus { border-color: var(--text-dark); }
+
+        /* 🏷️ TRANSLUCENT STATUS PILLS */
+        .badge { display: inline-block; border-radius: 20px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
+        .badge-pending { background: #FCE8E8; color: #F87171; }
+        .badge-done { background: #E6F8F3; color: #34D399; }
+ 
+        .status-chip {
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            font-size: 14px; font-weight: 500;
+            margin: 4px 0 20px; padding: 16px;
+            border-radius: 20px; background: #FCE8E8; color: #F87171; 
+        }
+        .status-chip.is-pinned { background: var(--text-dark); color: var(--card-white); }
+
+        /* 📊 STAT CARDS */
+        .stat-card {
+            background: var(--card-white);
+            border-radius: 28px;
+            padding: 24px;
+            display: flex; flex-direction: column; gap: 4px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        }
+        .stat-card.dark {
+            background: var(--text-dark);
+            color: var(--card-white);
+        }
+        .stat-card i { font-size: 24px; margin-bottom: 12px; }
+        .stat-card p.label { font-size: 14px; color: var(--text-gray); margin: 0; font-weight: 500; }
+        .stat-card.dark p.label { color: #a1a1aa; }
+        .stat-card p.value { font-size: 42px; font-weight: 600; margin: 0; letter-spacing: -1px; }
+
+        /* 📱 LIGHT FROSTED PILL NAVIGATION BAR */
+        .nav-bar {
+            background: rgba(255, 255, 255, 0.75); /* Translucent white */
+            backdrop-filter: blur(25px); /* Strong frosted glass blur */
+            -webkit-backdrop-filter: blur(25px);
+            display: flex; justify-content: space-around; align-items: center;
+            padding: 12px 10px 10px; 
+            position: fixed; bottom: 24px; left: 24px; right: 24px; /* Floating */
+            z-index: 1000;
+            border-radius: 40px; 
+            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06); /* Very soft shadow */
+            border: 1px solid rgba(255, 255, 255, 0.6); /* Subtle white rim reflection */
+        }
+        .nav-item {
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            color: var(--text-gray); /* Muted gray for inactive */
+            text-decoration: none; 
+            gap: 4px; /* Space between icon and text */
+            position: relative; transition: 0.3s;
+        }
+        .nav-item span { 
+            display: block; /* Restores the text labels like your image */
+            font-size: 11px; 
+            font-weight: 600;
+        }
+        .nav-item.active {
+            background: transparent; 
+            color: var(--text-dark); /* Dark charcoal for active */
+            transform: scale(1.05);
+        }
+        .nav-item i { font-size: 24px; }
+
+        /* POP-UP MODAL STYLES */
+        .modal-overlay {
+            position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0, 0, 0, 0.5); 
+            backdrop-filter: blur(8px); 
+            z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 20px;
+        }
+        .modal-content {
+            background: var(--bg-color); width: 100%; max-width: 400px; border-radius: 36px; padding: 32px;
+            box-shadow: 0 25px 50px rgba(0,0,0,0.15); 
+            position: relative;
+        }
+    </style>
+ 
+</head>
+
+    <!-- 🚨 SECURITY GUARD -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', async () => {
+            try {
+                let userSession = await localforage.getItem('user_session');
+                if (!userSession) {
+                    window.location.replace("login.html");
+                } else if (userSession.role === 'Admin' || userSession.role === 'secretary') {
+                    alert("Para sa mga Admin at Secretary, mangyari po lamang na gamitin ang Web Dashboard sa inyong computer.");
+                    await localforage.removeItem('user_session'); 
+                    window.location.replace("login.html");
+                }
+            } catch (error) {
+                window.location.replace("login.html");
+            }
+        });
+    </script>
+
+<body>
+ 
+    <!-- 🏠 HOME SECTION -->
+    <div id="section-home" class="content-section" style="display: block;">
+        <div class="top-bar">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div>
+                    <h2 id="home_greeting">Good morning,</h2>
+                    <p>Barangay Tanza</p>
+                </div>
+                <!-- Circular dark button matching top-right icon in reference image -->
+                <!-- Frosted Glass Notification Button -->
+<div style="background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.04); border: 1px solid rgba(255,255,255,0.8);">
+    <i class="ti ti-bell" style="font-size:24px;color:var(--text-dark);"></i>
+</div>
+            </div>
+        </div>
+        
+        <div class="body-container">
+            <div class="card" style="margin-bottom: 24px; padding: 28px;">
+                <p class="card-title">Select your next action</p>
+                <p class="card-sub" style="margin-top: 6px;">Manage reports and track cleanups.</p>
+            </div>
+ 
+            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:24px;">
+                <div class="stat-card">
+                    <div style="width: 40px; height: 40px; background: #f5f6f7; color: var(--text-dark); border-radius: 50%; display: flex; justify-content: center; align-items: center; margin-bottom: 12px;"><i class="ti ti-file-report" style="margin:0; font-size: 20px;"></i></div>
+                    <p class="label">My Reports</p>
+                    <p class="value" id="stat_total" style="color: var(--text-dark);">0</p>
+                </div>
+                <div class="stat-card dark">
+                    <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.1); color: var(--card-white); border-radius: 50%; display: flex; justify-content: center; align-items: center; margin-bottom: 12px;"><i class="ti ti-check" style="margin:0; font-size: 20px;"></i></div>
+                    <p class="label">Resolved</p>
+                    <p class="value" id="stat_resolved">0</p>
+                </div>
+            </div>
+            
+            <button class="btn-primary" onclick="switchTab('report')">
+                <i class="ti ti-plus"></i> Report a waste issue
+            </button>
+ 
+            <h3 class="section-title">Community Map</h3>
+            <div class="card" style="padding: 0; overflow: hidden; border-radius: 32px;">
+                <div id="communityMap" style="height: 350px; width: 100%; z-index: 1;"></div>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- 🌟 COMMUNITY FEED SECTION -->
+    <div id="section-feed" class="content-section">
+        <div class="top-bar">
+            <h2>Community Feed</h2>
+            <p>See how we are keeping Tanza clean</p>
+        </div>
+        <div class="body-container" id="feed_container" style="padding-top: 10px;">
+            <div class="card text-center" style="padding: 40px 20px; text-align:center;">
+                <i class="ti ti-sparkles" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
+                <p class="card-title" style="color: #666; font-size: 16px;">Loading Clean-ups...</p>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- 📷 REPORT SECTION -->
+    <div id="section-report" class="content-section">
+        <div class="top-bar">
+            <h2>Report Waste</h2>
+            <p>Help keep our coastlines clean.</p>
+        </div>
+        
+        <div class="body-container">
+            <div style="background:var(--card-white); border-radius:20px; padding:16px; margin-bottom:24px; display:flex; gap:12px; align-items:center; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
+                <i class="ti ti-wifi-off" style="color:var(--text-gray);font-size:24px;"></i>
+                <p style="font-size:14px;color:var(--text-gray);margin:0;font-weight:500;">Offline? This saves locally and syncs automatically.</p>
+            </div>
+ 
+            <form id="offlineReportForm">
+                <label class="input-label">Description</label>
+                <textarea id="description" class="input-field" rows="3" placeholder="Describe the waste issue..." required></textarea>
+ 
+                <label class="input-label">Photo Evidence</label>
+                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
+                    <button type="button" id="openCameraBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-camera"></i> Camera</button>
+                    <button type="button" id="openGalleryBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-photo"></i> Gallery</button>
+                </div>
+                <img id="photoPreview" src="" style="display:none; width:100%; max-height:250px; object-fit:cover; border-radius:24px; margin-bottom:24px;">
+ 
+                <label class="input-label">Location</label>
+                <button type="button" id="getLocationBtn" class="btn-outline"><i class="ti ti-current-location"></i> Auto-Detect My Location</button>
+                <button type="button" id="toggleManualMapBtn" class="btn-outline"><i class="ti ti-map-pin"></i> Pin Manually on Map</button>
+                
+                <div id="location_status" class="status-chip"><i class="ti ti-alert-circle"></i> Not pinned yet.</div>
+                
+                <div id="manualMapContainer" style="display: none; margin-bottom: 24px;">
+                    <p style="font-size: 14px; color: var(--text-gray); font-weight: 500; margin: 0 0 12px; text-align: center;">Tap anywhere to drop pin</p>
+                    <div class="card" style="padding: 0; overflow: hidden; border-radius: 28px; border: 4px solid var(--text-dark);">
+                        <div id="reportPinMap" style="height: 300px; width: 100%; z-index: 1;"></div>
+                    </div>
+                </div>
+                
+                <input type="hidden" id="lat" required>
+                <input type="hidden" id="lng" required>
+ 
+                <button type="submit" id="submit_btn" class="btn-primary" disabled><i class="ti ti-send"></i> Submit Report</button>
+            </form>
+        </div>
+    </div>
+ 
+    <!-- 📝 HISTORY SECTION -->
+    <div id="section-history" class="content-section">
+        <div class="top-bar">
+            <h2>My Reports</h2>
+            <p>Track your submitted waste reports.</p>
+        </div>
+        <div class="body-container" id="history_container">
+            <div class="card text-center" style="padding: 40px 20px; text-align:center;">
+                <i class="ti ti-clipboard-list" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
+                <p class="card-title" style="color: #666; font-size: 16px;">Loading reports...</p>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- 👤 PROFILE SECTION -->
+    <div id="section-profile" class="content-section">
+        <div class="top-bar" style="text-align:center;padding-bottom:10px;">
+            <div id="profile_top_avatar_box" style="width:110px;height:110px;border-radius:50%;background:var(--card-white);color:var(--text-dark);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:600;margin:0 auto 16px;overflow:hidden;box-shadow:0 8px 25px rgba(0,0,0,0.05);">
+                <span id="profile_top_initials">CL</span>
+                <img id="profile_top_img" src="" style="width:100%;height:100%;object-fit:cover;display:none;">
+            </div>
+            <h2 id="profile_top_name" style="margin:0; font-size: 28px; font-weight: 700;">Citizen</h2>
+            <p>Barangay Tanza · Resident</p>
+        </div>
+
+        <div class="body-container">
+            <h3 class="section-title">Account Settings</h3>
+            <div class="card" style="padding: 12px 24px;">
+                <div onclick="openEditProfileModal()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
+                    <span style="font-size:16px;color:var(--text-dark);font-weight:600;"><i class="ti ti-edit" style="font-size:22px;vertical-align:-5px;margin-right:12px;color:var(--text-gray);"></i>Edit Profile</span>
+                    <i class="ti ti-chevron-right" style="color:#ccc;font-size:20px;"></i>
+                </div>
+                <div style="height: 1px; background: var(--border-light); margin: 0;"></div>
+                <div onclick="logoutUser()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
+                    <span style="font-size:16px;color:#EF4444;font-weight:600;"><i class="ti ti-logout" style="font-size:22px;vertical-align:-5px;margin-right:12px;"></i>Log out</span>
+                </div>
+            </div>
+
+            <h3 class="section-title" style="margin-top: 30px;">Information</h3>
+            <div class="card" style="padding: 12px 24px;">
+                <div onclick="openEmergencyModal()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
+                    <span style="font-size:16px;color:var(--text-dark);font-weight:600;"><i class="ti ti-phone-call" style="font-size:22px;vertical-align:-5px;margin-right:12px;color:#EF4444;"></i>Emergency & Brgy Info</span>
+                    <i class="ti ti-chevron-right" style="color:#ccc;font-size:20px;"></i>
+                </div>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- REPORT DETAILS MODAL -->
+    <div id="reportModal" class="modal-overlay" style="display:none;">
+        <div class="modal-content">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 24px;">
+                <h3 style="margin:0; color:var(--text-dark); font-size: 22px; font-weight: 600; letter-spacing: -0.5px;">Report Details</h3>
+                <div onclick="closeReportModal()" style="background: var(--card-white); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
+                    <i class="ti ti-x" style="font-size:20px; color:var(--text-dark);"></i>
+                </div>
+            </div>
+            
+            <div id="modalImageContainer" style="display:flex; gap:12px; margin-bottom:24px; width:100%;">
+                <div id="beforePhotoContainer" style="flex:1;">
+                    <p style="font-size:13px; font-weight:600; margin:0 0 8px; color:var(--text-gray);">Before</p>
+                    <img id="modalImageBefore" src="" style="width:100%; height:160px; object-fit:cover; border-radius:24px;">
+                </div>
+                <div id="afterPhotoContainer" style="flex:1; display:none;">
+                    <p style="font-size:13px; font-weight:600; margin:0 0 8px; color:#10B981;">After</p>
+                    <img id="modalImageAfter" src="" style="width:100%; height:160px; object-fit:cover; border-radius:24px;">
+                </div>
+            </div>
+            
+            <div style="background: var(--card-white); border-radius: 24px; padding: 20px;">
+                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Reporter:</strong> <span id="modalName" style="color:var(--text-gray); float: right;"></span></p>
+                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Date:</strong> <span id="modalDate" style="color:var(--text-gray); float: right;"></span></p>
+                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Status:</strong> <span id="modalStatus" class="badge" style="float: right;"></span></p>
+                <p style="margin: 0; font-size: 15px;"><strong>Location:</strong> <span id="modalLocation" style="float: right;"></span></p>
+            </div>
+            
+            <div style="background:var(--card-white); padding:20px; border-radius:24px; margin-top:16px;">
+                <p style="margin:0; font-size:14px; font-weight: 600; color:var(--text-dark);">Description</p>
+                <p id="modalDesc" style="color:var(--text-gray); font-size: 15px; margin: 8px 0 0; line-height: 1.5;"></p>
+            </div>
+        </div>
+    </div>
+ 
+    <!-- FULL-SCREEN EDIT PROFILE MODAL -->
+    <div id="editProfileModal" class="modal-overlay" style="display:none; z-index: 2500; padding: 0; background: var(--bg-color);">
+        <div class="modal-content" style="width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; padding: 40px 24px 100px; box-sizing: border-box; overflow-y: auto; background: var(--bg-color); box-shadow: none;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 40px;">
+                <h3 style="margin:0; color:var(--text-dark); font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Edit Profile</h3>
+                <button type="button" onclick="closeEditProfileModal()" style="background: var(--card-white); border: none; border-radius: 50%; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                    <i class="ti ti-x" style="font-size:24px; color:var(--text-dark);"></i>
+                </button>
+            </div>
+            <div style="text-align: center; margin-bottom: 40px;">
+                <div style="position: relative; display: inline-block;">
+                    <img id="editProfilePreview" src="https://placehold.co/120x120/e0e0e0/a0a0a0?text=Photo" style="width: 130px; height: 130px; border-radius: 50%; object-fit: cover; border: 4px solid var(--card-white); box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
+                    <button type="button" id="changeProfilePicBtn" style="position: absolute; bottom: 0; right: 0; background: var(--text-dark); color: var(--card-white); border: none; border-radius: 50%; width: 44px; height: 44px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(33,37,41,0.2);">
+                        <i class="ti ti-camera" style="font-size: 20px;"></i>
+                    </button>
+                </div>
+            </div>
+            <form id="editProfileForm">
+                <label class="input-label">Full Name</label>
+                <input type="text" id="edit_fullname" class="input-field" placeholder="e.g. Juan Dela Cruz">
+                
+                <label class="input-label">Username</label>
+                <input type="text" id="edit_username" class="input-field" placeholder="Username">
+                
+                <label class="input-label">New Password <span style="font-size: 13px; font-weight: normal; color: var(--text-gray);">(Optional)</span></label>
+                <input type="password" id="edit_password" class="input-field" placeholder="••••••••">
+                
+                <label class="input-label">Phone Number</label>
+                <input type="tel" id="edit_phone" class="input-field" placeholder="09xxxxxxxxx">
+                
+                <label class="input-label">Date of Birth</label>
+                <input type="date" id="edit_dob" class="input-field">
+                
+                <label class="input-label">Address</label>
+                <input type="text" id="edit_address" class="input-field" placeholder="e.g. Sitio Gulod, Purok 2">
+                
+                <button type="submit" class="btn-primary" style="margin-top: 10px;">
+                    Save Profile Changes
+                </button>
+            </form>
+        </div>
+    </div>
+ 
+    <!-- 🚨 EMERGENCY INFO MODAL (Dynamic Tap-to-Call) -->
+    <div id="emergencyModal" class="modal-overlay" style="display:none; z-index: 2600;">
+        <div class="modal-content" style="max-height: 90vh; overflow-y: auto;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
+                <h3 style="margin:0; color:var(--text-dark); font-size: 22px; font-weight: 600; letter-spacing: -0.5px;">Emergency Info</h3>
+                <button type="button" onclick="closeEmergencyModal()" style="background: var(--card-white); border: none; border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
+                    <i class="ti ti-x" style="font-size:22px; color:var(--text-dark);"></i>
+                </button>
+            </div>
+            
+            <!-- JavaScript will inject the hotlines inside this div -->
+            <div id="dynamicEmergencyContainer">
+                <div style="text-align: center; padding: 30px; color: var(--text-gray);">
+                    <i class="ti ti-loader" style="font-size: 24px;"></i>
+                    <p>Loading hotlines...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 📱 DARK FLOATING PILL NAVIGATION BAR -->
+    <div class="nav-bar">
+        <a href="#" class="nav-item active" id="nav-home" onclick="switchTab('home')">
+            <i class="ti ti-home"></i><span>Home</span>
+        </a>
+        <a href="#" class="nav-item" id="nav-feed" onclick="switchTab('feed')">
+            <i class="ti ti-sparkles"></i><span>Feed</span>
+        </a>
+        <a href="#" class="nav-item" id="nav-report" onclick="switchTab('report')">
+            <i class="ti ti-camera"></i><span>Report</span>
+        </a>
+        <a href="#" class="nav-item" id="nav-history" onclick="switchTab('history')">
+            <i class="ti ti-clipboard-list"></i><span>History</span>
+        </a>
+        <a href="#" class="nav-item" id="nav-profile" onclick="switchTab('profile')">
+            <i class="ti ti-user"></i><span>Profile</span>
+        </a>
+    </div>
+ 
+    <script>
+        function switchTab(tabName) {
+            document.querySelectorAll('.content-section').forEach(section => {
+                section.style.display = 'none';
+            });
+            document.querySelectorAll('.nav-item').forEach(item => {
+                item.classList.remove('active');
+            });
+ 
+            document.getElementById('section-' + tabName).style.display = 'block';
+            document.getElementById('nav-' + tabName).classList.add('active');
+ 
+            if (tabName === 'home') {
+                if (typeof communityMap === 'undefined' || communityMap === null) {
+                    if (typeof loadCommunityMap === 'function') setTimeout(loadCommunityMap, 300); 
+                } else {
+                    setTimeout(() => { communityMap.invalidateSize(); }, 300); 
+                }
+                if (typeof loadDashboardStats === 'function') {
+                    setTimeout(loadDashboardStats, 300);
+                }
+            }
+ 
+            if (tabName === 'history') {
+                if (typeof loadHistory === 'function') {
+                    setTimeout(loadHistory, 300);
+                }
+            }
+ 
+            if (tabName === 'feed') {
+                if (typeof loadCommunityFeed === 'function') {
+                    setTimeout(loadCommunityFeed, 300);
+                }
+            }
+ 
+            if (tabName === 'profile') {
+                if (typeof loadProfileDisplay === 'function') {
+                    loadProfileDisplay();
+                }
+            }
+        }
+ 
+        function markLocationPinned(isPinned) {
+            const chip = document.getElementById('location_status');
+            if (!chip) return;
+            chip.classList.toggle('is-pinned', !!isPinned);
+        }
+
+        function openEmergencyModal() {
+            document.getElementById('emergencyModal').style.display = 'flex';
+            loadDynamicEmergencyInfo(); // Trigger the fetch when modal opens
+        }
+        
+        function closeEmergencyModal() {
+            document.getElementById('emergencyModal').style.display = 'none';
+        }
+
+        // 🚨 UPGRADED: Gorgeous iOS-style Emergency & Info UI
+        async function loadDynamicEmergencyInfo() {
+            const container = document.getElementById('dynamicEmergencyContainer');
+            
+            try {
+                let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api/api_get_barangay_info.php', {
+    method: 'GET',
+    headers: { 'ngrok-skip-browser-warning': 'true' }
+});
+
+                let result = await response.json();
+                
+                if (result.status === 'success') {
+                    let info = result.data;
+                    let html = '';
+
+                    // 1. EMERGENCY TAP-TO-CALL CARDS
+                    html += `<div style="margin-bottom: 24px;">
+                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px;">
+                                    <div style="background: #FEE2E2; color: #DC2626; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px;">🚨</div>
+                                    <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #1A1A1A; letter-spacing: -0.3px;">Emergency Hotlines</h4>
+                                </div>`;
+                    
+                    if (info.pnp_hotline) {
+                        html += `<a href="tel:${info.pnp_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
+                                    <div style="display: flex; align-items: center; gap: 14px;">
+                                        <div style="background: #EFF6FF; color: #3B82F6; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-shield"></i></div>
+                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Police (PNP)</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.pnp_hotline}</strong></div>
+                                    </div>
+                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
+                                 </a>`;
+                    }
+                    if (info.bfp_hotline) {
+                        html += `<a href="tel:${info.bfp_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
+                                    <div style="display: flex; align-items: center; gap: 14px;">
+                                        <div style="background: #FEF2F2; color: #EF4444; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-flame"></i></div>
+                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Fire Protection (BFP)</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.bfp_hotline}</strong></div>
+                                    </div>
+                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
+                                 </a>`;
+                    }
+                    if (info.mdrrmo_hotline) {
+                        html += `<a href="tel:${info.mdrrmo_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
+                                    <div style="display: flex; align-items: center; gap: 14px;">
+                                        <div style="background: #F0FDF4; color: #22C55E; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-ambulance"></i></div>
+                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">MDRRMO / Rescue</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.mdrrmo_hotline}</strong></div>
+                                    </div>
+                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
+                                 </a>`;
+                    }
+                    if (info.health_center_hotline) {
+                        html += `<a href="tel:${info.health_center_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
+                                    <div style="display: flex; align-items: center; gap: 14px;">
+                                        <div style="background: #FAF5FF; color: #A855F7; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-activity"></i></div>
+                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Health Center</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.health_center_hotline}</strong></div>
+                                    </div>
+                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
+                                 </a>`;
+                    }
+                    html += `</div>`;
+
+                    // 2. BARANGAY OFFICE CARD
+                    html += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px;">
+                                <div style="background: #E0E7FF; color: #4F46E5; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px;">🏛️</div>
+                                <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #1A1A1A; letter-spacing: -0.3px;">Barangay Office</h4>
+                             </div>
+                             
+                             <div style="background: #ffffff; border-radius: 24px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.02); border: 1px solid #F3F4F6;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
+                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Contact Number</span>
+                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.contact_number || 'N/A'}</strong>
+                                </div>
+                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
+                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Punong Barangay</span>
+                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.captain_name || 'N/A'}</strong>
+                                </div>
+                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
+                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
+                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Office Hours</span>
+                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.office_hours || 'N/A'}</strong>
+                                </div>
+                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
+                                <div style="padding: 8px 0;">
+                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500; display: block; margin-bottom: 2px;">Address</span>
+                                    <strong style="color: #1A1A1A; font-size: 14px; line-height: 1.4;">${info.full_address || 'Brgy. Tanza, Estancia, Iloilo'}</strong>
+                                </div>
+                             </div>`;
+
+                    container.innerHTML = html;
+                } else {
+                    container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Failed to load system info.</div>';
+                }
+            } catch (error) {
+                console.error("API Error:", error);
+                container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Please check your internet connection.</div>';
+            }
+        }
+    </script>
+ 
+    <script src="js/localforage.min.js"></script>
+ 
+    <script>
+        document.addEventListener("DOMContentLoaded", async () => {
+            const userSession = await localforage.getItem('user_session');
+            if (!userSession) {
+                window.location.replace("login.html");
+            } else {
+                switchTab('home'); 
+            }
+        });
+    </script>
+ 
+    <script src="js/app.js"></script>
+
+    <!-- 🔄 PULL-TO-REFRESH -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pulltorefreshjs/0.1.22/index.umd.min.js"></script>
+
+    <script>
+        PullToRefresh.init({
+            mainElement: 'body',
+            distThreshold: 60,
+            instructionsPullToRefresh: 'Pull down to refresh',
+            instructionsReleaseToRefresh: 'Release to refresh',
+            instructionsRefreshing: 'Loading...',
+            onRefresh: function (done) {
+                let activeSection = document.querySelector('.content-section[style*="display: block"]');
+                let activeId = activeSection ? activeSection.id : 'section-home';
+
+                if (activeId === 'section-home') {
+                    if (typeof loadDashboardStats === 'function') loadDashboardStats();
+                    if (typeof loadCommunityMap === 'function') loadCommunityMap();
+                } else if (activeId === 'section-feed') {
+                    if (typeof loadCommunityFeed === 'function') loadCommunityFeed();
+                } else if (activeId === 'section-history') {
+                    if (typeof loadHistory === 'function') loadHistory();
+                } else if (activeId === 'section-profile') {
+                    if (typeof loadProfileDisplay === 'function') loadProfileDisplay();
+                }
+
+                setTimeout(function() { done(); }, 1500); 
+            }
+        });
+    </script>
+</body>
+</html>
