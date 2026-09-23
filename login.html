@@ -12,7 +12,6 @@ if (isset($_POST['login'])) {
     $username = trim($_POST['username']);
     $password = $_POST['password'];
 
-    // 1. Find the user in the database (Using your secure prepared statement!)
     $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
@@ -20,21 +19,17 @@ if (isset($_POST['login'])) {
 
     if ($result->num_rows === 1) {
         $user = $result->fetch_assoc();
-
-        // 2. Verify Password (Supports both new Bcrypt hashes and old plain-text test accounts)
+        
         $is_password_correct = false;
         if (password_verify($password, $user['password']) || $password === $user['password']) {
             $is_password_correct = true;
         }
 
         if ($is_password_correct) {
-            
-            // 3. THE GATEKEEPER: Check Account Status
             if ($user['role'] === 'Resident' && $user['account_status'] === 'Rejected') {
-                $login_error = "❌ Your registration was rejected. Please contact the Barangay Hall.";
+                $login_error = "Your registration was rejected. Please contact the Barangay Hall.";
             } 
             else {
-                // Account is Approved or Pending. Both log in!
                 $_SESSION['user_id'] = $user['user_id'];
                 $_SESSION['role'] = $user['role'];
 
@@ -45,18 +40,14 @@ if (isset($_POST['login'])) {
                 }
                 exit();
             }
-
         } else {
-            $login_error = "❌ Incorrect password.";
+            $login_error = "Incorrect password.";
         }
     } else {
-        $login_error = "❌ Username not found.";
+        $login_error = "Username not found.";
     }
 }
 
-// ==========================================
-// FETCH DYNAMIC LOGO FROM SYSTEM INFO
-// ==========================================
 $check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
 if ($check_info && $check_info->num_rows > 0) {
     $info = $check_info->fetch_assoc();
@@ -64,7 +55,6 @@ if ($check_info && $check_info->num_rows > 0) {
     $info = [];
 }
 
-// If they uploaded a logo in the system, use it. Otherwise, use tanzalogo.jpg.
 $login_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'tanzalogo.jpg';
 $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'Barangay Coastal & Land Watch';
 ?>
@@ -75,164 +65,135 @@ $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'B
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>System Login - Coastal & Land Watch</title>
-    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
     
     <style>
-        /* PAGE BACKGROUND */
+        :root {
+            --bg-color: #F2EFE9; 
+            --card-white: #FFFFFF;
+            --card-lime: #D9FA4A; 
+            --text-dark: #1A1A1A;
+            --text-gray: #6B7280;
+        }
+
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            background-color: #ECEFF1; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            margin: 0; 
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: var(--bg-color); 
+            display: flex; align-items: center; justify-content: center; 
+            min-height: 100vh; margin: 0; padding: 20px;
         }
 
-        /* LOGIN CARD STYLING */
         .login-card { 
-            background: #fff; 
-            padding: 40px; 
-            border-radius: 16px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.08); 
-            border: 1px solid rgba(0,0,0,0.05); 
-            width: 100%; 
-            max-width: 420px; 
+            background: var(--card-white); 
+            padding: 48px 40px; 
+            border-radius: 32px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.03); 
+            width: 100%; max-width: 440px; 
         }
 
-        /* LOGO STYLING */
         .brand-logo {
-            width: 110px;
-            height: 110px;
-            object-fit: cover;
-            border-radius: 50%;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            border: 3px solid #ECEFF1;
-            background-color: #fff;
-            padding: 2px;
+            width: 100px; height: 100px; object-fit: cover;
+            border-radius: 28px; margin-bottom: 24px;
+            border: 1px solid #E5E7EB;
         }
 
-        /* TYPOGRAPHY */
-        .system-title { font-weight: 800; color: #1B5E20; font-size: 24px; margin-bottom: 5px; }
-        .system-subtitle { color: #546E7A; font-size: 14px; font-weight: 600; margin-bottom: 30px; letter-spacing: 0.5px; }
-        .form-label { font-weight: 700; color: #546E7A; font-size: 13px; margin-bottom: 6px; }
-
-        /* MODERN INPUTS */
-        .custom-input { 
-            border-radius: 8px; 
-            border: 1px solid #CFD8DC; 
-            padding: 12px 14px; 
-            background-color: #F8FDFF; 
-            color: #263238; 
-            transition: 0.2s; 
-            box-shadow: none !important;
-        }
-        .custom-input:focus { border-color: #81C784; background-color: #fff; }
+        .system-title { font-weight: 700; color: var(--text-dark); font-size: 28px; margin-bottom: 8px; letter-spacing: -0.5px; }
+        .system-subtitle { color: var(--text-gray); font-size: 15px; font-weight: 500; margin-bottom: 32px; }
         
-        /* PASSWORD EYE TOGGLE STYLING */
+        .form-label { font-weight: 600; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; }
+        
+        .custom-input { 
+            border-radius: 16px; border: 1px solid #E5E7EB; 
+            padding: 14px 16px; background-color: #F9FAFB; 
+            color: var(--text-dark); transition: 0.2s; box-shadow: none !important;
+        }
+        .custom-input:focus { border-color: var(--text-dark); background-color: #fff; }
+        
         .input-group .custom-input { border-right: none; border-top-right-radius: 0; border-bottom-right-radius: 0; }
         .custom-input-btn { 
-            border-color: #CFD8DC; 
-            background-color: #F8FDFF; 
-            border-left: none; 
-            border-top-right-radius: 8px; 
-            border-bottom-right-radius: 8px; 
-            color: #546E7A; 
+            border-color: #E5E7EB; background-color: #F9FAFB; 
+            border-left: none; border-top-right-radius: 16px; border-bottom-right-radius: 16px; 
+            color: var(--text-gray); padding: 0 16px;
         }
-        .custom-input:focus + .custom-input-btn { border-color: #81C784; background-color: #fff; }
+        .custom-input:focus + .custom-input-btn { border-color: var(--text-dark); background-color: #fff; }
 
-        /* LOGIN BUTTON */
         .btn-login { 
-            background-color: #2E7D32; 
-            color: #fff; 
-            border: none; 
-            border-radius: 8px; 
-            font-weight: 800; 
-            font-size: 16px;
-            padding: 12px;
-            transition: 0.3s; 
-            box-shadow: 0 4px 10px rgba(46,125,50,0.2);
+            background-color: var(--text-dark); color: var(--card-lime); 
+            border: none; border-radius: 30px; 
+            font-weight: 600; font-size: 16px; padding: 16px;
+            transition: 0.2s; margin-top: 8px;
         }
-        .btn-login:hover { 
-            background-color: #1B5E20; 
-            transform: translateY(-2px); 
-            box-shadow: 0 6px 15px rgba(27,94,32,0.3); 
-            color: #fff; 
-        }
+        .btn-login:hover { transform: scale(0.98); opacity: 0.9; color: var(--card-lime); }
 
-        /* REGISTER LINK */
-        .register-text { font-size: 14px; color: #546E7A; margin-top: 20px; }
-        .register-link { color: #1E88E5; font-weight: 700; text-decoration: none; transition: 0.2s; }
-        .register-link:hover { color: #1565C0; text-decoration: underline; }
+        .forgot-link { font-size: 13px; font-weight: 600; color: var(--text-gray); text-decoration: none; transition: 0.2s; }
+        .forgot-link:hover { color: var(--text-dark); text-decoration: underline; }
+
+        .register-text { font-size: 14px; color: var(--text-gray); margin-top: 32px; font-weight: 500; }
+        .register-link { color: var(--text-dark); font-weight: 700; text-decoration: none; border-bottom: 2px solid var(--card-lime); padding-bottom: 2px; transition: 0.2s; }
+        .register-link:hover { opacity: 0.7; }
+        
+        .alert { border-radius: 16px; font-size: 14px; font-weight: 500; text-align: center; border: none; }
+        .alert-danger { background: #FCE8E8; color: #DC2626; }
+        .alert-warning { background: #FEF9C3; color: #854D0E; }
     </style>
 </head>
 <body>
 
     <div class="login-card">
-        
         <div class="text-center">
-            <img src="<?php echo htmlspecialchars($login_logo); ?>" alt="Barangay Logo" class="brand-logo" onerror="this.src='tanzalogo.jpg'">
-            <h2 class="system-title">System Login</h2>
+            <img src="<?php echo htmlspecialchars($login_logo); ?>" alt="Logo" class="brand-logo" onerror="this.src='tanzalogo.jpg'">
+            <h2 class="system-title">Welcome back</h2>
             <p class="system-subtitle"><?php echo htmlspecialchars($system_title); ?></p>
         </div>
 
         <?php if(!empty($login_warning)): ?>
-            <div class="alert alert-warning shadow-sm fw-bold text-dark text-center" style="font-size: 14px; border-radius: 8px;">
-                <?php echo $login_warning; ?>
-            </div>
+            <div class="alert alert-warning shadow-sm"><i class="ti ti-alert-triangle"></i> <?php echo $login_warning; ?></div>
         <?php endif; ?>
 
         <?php if(!empty($login_error)): ?>
-            <div class="alert alert-danger shadow-sm fw-bold text-center" style="font-size: 14px; border-radius: 8px;">
-                <?php echo $login_error; ?>
-            </div>
+            <div class="alert alert-danger shadow-sm"><i class="ti ti-x"></i> <?php echo $login_error; ?></div>
         <?php endif; ?>
 
         <form method="POST" action="">
-            
             <div class="mb-3">
                 <label class="form-label">Username</label>
                 <input type="text" name="username" class="form-control custom-input" placeholder="Enter your username" required>
             </div>
 
-            <div class="mb-4">
+            <div class="mb-2">
                 <label class="form-label">Password</label>
                 <div class="input-group">
                     <input type="password" name="password" id="passwordInput" class="form-control custom-input" placeholder="••••••••" required>
                     <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">
-                        👁️
+                        <i class="ti ti-eye"></i>
                     </button>
                 </div>
             </div>
 
-           <div class="text-end mb-3 mt-1">
-                <a href="forgot_password.php" style="font-size: 13px; font-weight: 600; color: #E65100; text-decoration: none;">Forgot Password?</a>
+           <div class="text-end mb-4">
+                <a href="forgot_password.php" class="forgot-link">Forgot Password?</a>
             </div>
 
             <button type="submit" name="login" class="btn w-100 btn-login">
                 Log In
             </button>
-
         </form>
 
         <div class="text-center register-text">
             Don't have an account? <a href="register.php" class="register-link">Register Here</a>
         </div>
-
     </div>
 
     <script>
         const togglePassword = document.querySelector('#togglePassword');
         const password = document.querySelector('#passwordInput');
 
-        togglePassword.addEventListener('click', function (e) {
+        togglePassword.addEventListener('click', function () {
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
             password.setAttribute('type', type);
-            this.textContent = type === 'password' ? '👁️' : '🙈';
+            this.innerHTML = type === 'password' ? '<i class="ti ti-eye"></i>' : '<i class="ti ti-eye-off"></i>';
         });
     </script>
-
 </body>
 </html>
