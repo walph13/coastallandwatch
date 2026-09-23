@@ -13,16 +13,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     $address = $conn->real_escape_string($_POST['address']);
     $dob = $conn->real_escape_string($_POST['dob']);
 
-    // Encrypt the password for security
     $hashed_password = password_hash($password, PASSWORD_BCRYPT);
 
-    // Check if username already exists
     $check_user = $conn->query("SELECT * FROM users WHERE username = '$username'");
     
     if ($check_user->num_rows > 0) {
         $register_error = "Username is already taken. Please choose another.";
     } else {
-        // Handle ID Upload
         $target_dir = "uploads/ids/";
         if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
         
@@ -36,8 +33,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         } else {
             if (move_uploaded_file($_FILES["valid_id"]["tmp_name"], $target_file)) {
                 
-                // Insert into database (Status is Pending by default!)
-                $insert_sql = "INSERT INTO users (full_name, username, password, phone_number, address, dob, id_photo_path, role, account_status) 
+                $insert_sql = "INSERT INTO users (full_name, username, password, phone_number, address_purok_sitio, date_of_birth, id_photo_path, role, account_status) 
                                VALUES (?, ?, ?, ?, ?, ?, ?, 'Resident', 'Pending')";
                 
                 $stmt = $conn->prepare($insert_sql);
@@ -62,44 +58,68 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Resident Registration - Coastal & Land Watch</title>
-    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
     
     <style>
+        :root {
+            --bg-color: #F2EFE9; 
+            --card-white: #FFFFFF;
+            --card-lime: #D9FA4A; 
+            --text-dark: #1A1A1A;
+            --text-gray: #6B7280;
+        }
+
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            background-color: #ECEFF1; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            margin: 0; 
-            padding: 40px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: var(--bg-color); 
+            display: flex; align-items: center; justify-content: center; 
+            min-height: 100vh; margin: 0; padding: 40px 20px;
         }
+
         .register-card { 
-            background: #fff; 
-            padding: 40px; 
-            border-radius: 16px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.08); 
-            border: 1px solid rgba(0,0,0,0.05); 
-            width: 100%; 
-            max-width: 600px; 
+            background: var(--card-white); 
+            padding: 48px; 
+            border-radius: 32px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.03); 
+            width: 100%; max-width: 650px; 
         }
-        .system-title { font-weight: 800; color: #2E7D32; font-size: 28px; margin-bottom: 5px; text-align: center; }
-        .system-subtitle { color: #546E7A; font-size: 14px; font-weight: 600; margin-bottom: 30px; text-align: center; }
-        .form-label { font-weight: 700; color: #455A64; font-size: 13px; margin-bottom: 6px; }
-        .custom-input { border-radius: 8px; border: 1px solid #CFD8DC; padding: 10px 14px; background-color: #fff; color: #263238; transition: 0.2s; box-shadow: none !important; }
-        .custom-input:focus { border-color: #81C784; background-color: #F8FDFF; }
+
+        .system-title { font-weight: 700; color: var(--text-dark); font-size: 28px; margin-bottom: 8px; letter-spacing: -0.5px; text-align: center; }
+        .system-subtitle { color: var(--text-gray); font-size: 15px; font-weight: 500; margin-bottom: 32px; text-align: center; }
+        
+        .form-label { font-weight: 600; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; }
+        
+        .custom-input { 
+            border-radius: 16px; border: 1px solid #E5E7EB; 
+            padding: 14px 16px; background-color: #F9FAFB; 
+            color: var(--text-dark); transition: 0.2s; box-shadow: none !important;
+        }
+        .custom-input:focus { border-color: var(--text-dark); background-color: #fff; }
         
         .input-group .custom-input { border-right: none; border-top-right-radius: 0; border-bottom-right-radius: 0; }
-        .custom-input-btn { border-color: #CFD8DC; background-color: #fff; border-left: none; border-top-right-radius: 8px; border-bottom-right-radius: 8px; color: #546E7A; }
-        .custom-input:focus + .custom-input-btn { border-color: #81C784; background-color: #F8FDFF; }
+        .custom-input-btn { 
+            border-color: #E5E7EB; background-color: #F9FAFB; 
+            border-left: none; border-top-right-radius: 16px; border-bottom-right-radius: 16px; 
+            color: var(--text-gray); padding: 0 16px;
+        }
+        .custom-input:focus + .custom-input-btn { border-color: var(--text-dark); background-color: #fff; }
 
-        .btn-register { background-color: #1B5E20; color: #fff; border: none; border-radius: 8px; font-weight: 800; font-size: 16px; padding: 12px; transition: 0.3s; margin-top: 15px; }
-        .btn-register:hover { background-color: #2E7D32; color: #fff; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(46,125,50,0.3); }
+        .btn-register { 
+            background-color: var(--text-dark); color: var(--card-lime); 
+            border: none; border-radius: 30px; 
+            font-weight: 600; font-size: 16px; padding: 16px;
+            transition: 0.2s; margin-top: 15px;
+        }
+        .btn-register:hover { transform: scale(0.98); opacity: 0.9; color: var(--card-lime); }
+
+        .login-text { font-size: 14px; color: var(--text-gray); margin-top: 32px; font-weight: 500; text-align: center; }
+        .login-link { color: var(--text-dark); font-weight: 700; text-decoration: none; border-bottom: 2px solid var(--card-lime); padding-bottom: 2px; transition: 0.2s; }
+        .login-link:hover { opacity: 0.7; }
         
-        .login-link { color: #1B5E20; font-weight: 700; text-decoration: none; transition: 0.2s; }
-        .login-link:hover { color: #2E7D32; text-decoration: underline; }
+        .alert { border-radius: 16px; font-size: 14px; font-weight: 500; text-align: center; border: none; }
+        .alert-success { background: #E6F8F3; color: #047857; }
+        .alert-danger { background: #FCE8E8; color: #DC2626; }
     </style>
 </head>
 <body>
@@ -112,16 +132,14 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         </div>
 
         <?php if (!empty($register_success)): ?>
-            <div class="alert alert-success text-center shadow-sm" style="font-size: 14px; font-weight: 700; border-radius: 8px;">
-                ✅ <?php echo $register_success; ?> <br>
-                <a href="login.php" class="alert-link mt-2 d-block">Click here to return to Login</a>
+            <div class="alert alert-success shadow-sm">
+                <i class="ti ti-check"></i> <?php echo $register_success; ?> <br>
+                <a href="login.php" class="alert-link mt-2 d-block" style="color: #047857; font-weight: 700;">Click here to return to Login</a>
             </div>
         <?php endif; ?>
 
         <?php if (!empty($register_error)): ?>
-            <div class="alert alert-danger text-center shadow-sm" style="font-size: 14px; font-weight: 700; border-radius: 8px;">
-                ⚠️ <?php echo $register_error; ?>
-            </div>
+            <div class="alert alert-danger shadow-sm"><i class="ti ti-alert-circle"></i> <?php echo $register_error; ?></div>
         <?php endif; ?>
 
         <?php if (empty($register_success)): ?>
@@ -141,7 +159,9 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                         <label class="form-label">Password</label>
                         <div class="input-group">
                             <input type="password" name="password" id="passwordInput" class="form-control custom-input" placeholder="••••••••" required>
-                            <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">👁️</button>
+                            <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">
+                                <i class="ti ti-eye"></i>
+                            </button>
                         </div>
                     </div>
                 </div>
@@ -164,13 +184,13 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
                 <div class="mb-4">
                     <label class="form-label">Upload Valid ID</label>
-                    <input type="file" name="valid_id" class="form-control custom-input" accept=".jpg,.jpeg,.png" required>
-                    <small class="text-muted d-block mt-1" style="font-size: 11px;">Upload a clear photo of your Barangay ID, Voter's ID, or any valid Gov ID.</small>
+                    <input type="file" name="valid_id" class="form-control custom-input" accept=".jpg,.jpeg,.png" required style="padding: 10px 16px;">
+                    <small class="text-muted d-block mt-2" style="font-size: 12px; font-weight: 500;">Upload a clear photo of your Barangay ID, Voter's ID, or any valid Gov ID.</small>
                 </div>
 
-                <div class="form-check mb-3">
-                    <input class="form-check-input" type="checkbox" id="termsCheck" required>
-                    <label class="form-check-label text-muted" for="termsCheck" style="font-size: 13px;">
+                <div class="form-check mb-4" style="padding-left: 28px;">
+                    <input class="form-check-input" type="checkbox" id="termsCheck" required style="width: 18px; height: 18px; margin-top: 2px;">
+                    <label class="form-check-label text-muted ms-2" for="termsCheck" style="font-size: 13px; font-weight: 500;">
                         I agree to the Terms of Service and Privacy Policy.
                     </label>
                 </div>
@@ -178,27 +198,23 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                 <button type="submit" class="btn w-100 btn-register">
                     Register Account
                 </button>
-
             </form>
         <?php endif; ?>
 
-        <div class="text-center mt-4" style="font-size: 14px; color: #546E7A;">
+        <div class="login-text">
             Already have an account? <a href="login.php" class="login-link">Log In Here</a>
         </div>
-
     </div>
 
     <script>
-        // Password visibility toggle
         const togglePassword = document.querySelector('#togglePassword');
         const password = document.querySelector('#passwordInput');
 
-        togglePassword.addEventListener('click', function (e) {
+        togglePassword.addEventListener('click', function () {
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
             password.setAttribute('type', type);
-            this.textContent = type === 'password' ? '👁️' : '🙈';
+            this.innerHTML = type === 'password' ? '<i class="ti ti-eye"></i>' : '<i class="ti ti-eye-off"></i>';
         });
     </script>
-
 </body>
 </html>
