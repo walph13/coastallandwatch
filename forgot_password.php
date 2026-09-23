@@ -46,45 +46,72 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
     <title>Forgot Password - Coastal & Land Watch</title>
     
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
     
     <style>
+        :root {
+            --bg-color: #F2EFE9; 
+            --card-white: #FFFFFF;
+            --card-lime: #D9FA4A; 
+            --text-dark: #1A1A1A;
+            --text-gray: #6B7280;
+        }
+
         body { 
-            font-family: 'Segoe UI', Arial, sans-serif; 
-            background-color: #ECEFF1; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            min-height: 100vh; 
-            margin: 0; 
-            padding: 40px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
+            background-color: var(--bg-color); 
+            display: flex; align-items: center; justify-content: center; 
+            min-height: 100vh; margin: 0; padding: 40px 20px;
         }
+
         .reset-card { 
-            background: #fff; 
-            padding: 40px; 
-            border-radius: 16px; 
-            box-shadow: 0 10px 30px rgba(0,0,0,0.08); 
-            border: 1px solid rgba(0,0,0,0.05); 
-            width: 100%; 
-            max-width: 500px; 
+            background: var(--card-white); 
+            padding: 48px; 
+            border-radius: 32px; 
+            box-shadow: 0 10px 40px rgba(0,0,0,0.03); 
+            width: 100%; max-width: 550px; 
         }
-        /* GREEN THEME */
-        .system-title { font-weight: 800; color: #2E7D32; font-size: 26px; margin-bottom: 5px; text-align: center; }
-        .system-subtitle { color: #546E7A; font-size: 14px; font-weight: 600; margin-bottom: 25px; text-align: center; }
-        .info-text { font-size: 13px; color: #78909C; text-align: center; margin-bottom: 30px; background: #E8F5E9; padding: 15px; border-radius: 8px; border: 1px solid #C8E6C9; }
+
+        .system-title { font-weight: 700; color: var(--text-dark); font-size: 28px; margin-bottom: 8px; letter-spacing: -0.5px; text-align: center; }
+        .system-subtitle { color: var(--text-gray); font-size: 15px; font-weight: 500; margin-bottom: 32px; text-align: center; }
         
-        .form-label { font-weight: 700; color: #455A64; font-size: 13px; margin-bottom: 6px; }
-        .custom-input { border-radius: 8px; border: 1px solid #CFD8DC; padding: 10px 14px; background-color: #fff; color: #263238; transition: 0.2s; box-shadow: none !important; }
-        .custom-input:focus { border-color: #81C784; background-color: #F8FDFF; }
+        .info-text { 
+            font-size: 14px; color: var(--text-gray); text-align: center; margin-bottom: 32px; 
+            background: #F9FAFB; padding: 20px; border-radius: 20px; border: 1px solid #E5E7EB; line-height: 1.5;
+        }
+        
+        .form-label { font-weight: 600; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; }
+        
+        .custom-input { 
+            border-radius: 16px; border: 1px solid #E5E7EB; 
+            padding: 14px 16px; background-color: #F9FAFB; 
+            color: var(--text-dark); transition: 0.2s; box-shadow: none !important;
+        }
+        .custom-input:focus { border-color: var(--text-dark); background-color: #fff; }
         
         .input-group .custom-input { border-right: none; border-top-right-radius: 0; border-bottom-right-radius: 0; }
-        .custom-input-btn { border-color: #CFD8DC; background-color: #fff; border-left: none; border-top-right-radius: 8px; border-bottom-right-radius: 8px; color: #546E7A; }
-        .custom-input:focus + .custom-input-btn { border-color: #81C784; background-color: #F8FDFF; }
+        .custom-input-btn { 
+            border-color: #E5E7EB; background-color: #F9FAFB; 
+            border-left: none; border-top-right-radius: 16px; border-bottom-right-radius: 16px; 
+            color: var(--text-gray); padding: 0 16px;
+        }
+        .custom-input:focus + .custom-input-btn { border-color: var(--text-dark); background-color: #fff; }
 
-        .btn-reset { background-color: #1B5E20; color: #fff; border: none; border-radius: 8px; font-weight: 800; font-size: 16px; padding: 12px; transition: 0.3s; margin-top: 10px; }
-        .btn-reset:hover { background-color: #2E7D32; color: #fff; transform: translateY(-2px); box-shadow: 0 6px 15px rgba(46,125,50,0.3); }
+        .btn-reset { 
+            background-color: var(--text-dark); color: var(--card-lime); 
+            border: none; border-radius: 30px; 
+            font-weight: 600; font-size: 16px; padding: 16px;
+            transition: 0.2s; margin-top: 15px;
+        }
+        .btn-reset:hover { transform: scale(0.98); opacity: 0.9; color: var(--card-lime); }
+
+        .login-text { font-size: 14px; color: var(--text-gray); margin-top: 32px; font-weight: 500; text-align: center; }
+        .login-link { color: var(--text-dark); font-weight: 700; text-decoration: none; border-bottom: 2px solid var(--card-lime); padding-bottom: 2px; transition: 0.2s; }
+        .login-link:hover { opacity: 0.7; }
         
-        .login-link { color: #1B5E20; font-weight: 700; text-decoration: none; transition: 0.2s; }
-        .login-link:hover { color: #2E7D32; text-decoration: underline; }
+        .alert { border-radius: 16px; font-size: 14px; font-weight: 500; text-align: center; border: none; padding: 20px; }
+        .alert-success { background: #E6F8F3; color: #047857; }
+        .alert-danger { background: #FCE8E8; color: #DC2626; }
     </style>
 </head>
 <body>
@@ -98,22 +125,22 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
         <?php if (!empty($reset_success)): ?>
             
-            <div class="alert alert-success text-center shadow-sm mb-0" style="font-size: 14px; font-weight: 700; border-radius: 8px;">
-                ✅ <?php echo $reset_success; ?> <br>
-                <a href="login.php" class="btn btn-sm btn-success mt-3 fw-bold px-4 py-2">Go to Login</a>
+            <div class="alert alert-success shadow-sm mb-0">
+                <div style="font-size: 32px; margin-bottom: 12px;"><i class="ti ti-circle-check"></i></div>
+                <strong style="font-size: 16px; display: block; margin-bottom: 8px;"><?php echo $reset_success; ?></strong>
+                <a href="login.php" class="btn btn-sm mt-3 fw-bold px-4 py-2" style="background: #047857; color: #fff; border-radius: 20px;">Go to Login</a>
             </div>
             
         <?php else: ?>
 
             <div class="info-text">
-                🔒 <strong>Identity Verification Required</strong><br>
+                <i class="ti ti-lock" style="font-size: 24px; color: var(--text-dark); margin-bottom: 8px; display: block;"></i>
+                <strong style="color: var(--text-dark);">Identity Verification Required</strong><br>
                 To reset your password, please verify your identity by entering your registered Username, Phone Number, and Date of Birth exactly as they appear on your account.
             </div>
 
             <?php if (!empty($reset_error)): ?>
-                <div class="alert alert-danger text-center shadow-sm" style="font-size: 14px; font-weight: 700; border-radius: 8px;">
-                    ⚠️ <?php echo $reset_error; ?>
-                </div>
+                <div class="alert alert-danger shadow-sm"><i class="ti ti-alert-circle"></i> <?php echo $reset_error; ?></div>
             <?php endif; ?>
 
             <form method="POST" action="">
@@ -134,13 +161,15 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
                     </div>
                 </div>
 
-                <hr style="border-color: #CFD8DC; margin: 25px 0;">
+                <div style="height: 1px; background: #E5E7EB; margin: 30px 0;"></div>
 
                 <div class="mb-4">
-                    <label class="form-label text-success">Create New Password</label>
+                    <label class="form-label" style="color: #047857;">Create New Password</label>
                     <div class="input-group">
                         <input type="password" name="new_password" id="passwordInput" class="form-control custom-input" placeholder="Enter new password" required>
-                        <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">👁️</button>
+                        <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">
+                            <i class="ti ti-eye"></i>
+                        </button>
                     </div>
                 </div>
 
@@ -150,7 +179,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
 
             </form>
 
-            <div class="text-center mt-4" style="font-size: 14px; color: #546E7A;">
+            <div class="login-text">
                 Remembered your password? <a href="login.php" class="login-link">Log In Here</a>
             </div>
 
@@ -162,10 +191,10 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         const togglePassword = document.querySelector('#togglePassword');
         const password = document.querySelector('#passwordInput');
 
-        togglePassword.addEventListener('click', function (e) {
+        togglePassword.addEventListener('click', function () {
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
             password.setAttribute('type', type);
-            this.textContent = type === 'password' ? '👁️' : '🙈';
+            this.innerHTML = type === 'password' ? '<i class="ti ti-eye"></i>' : '<i class="ti ti-eye-off"></i>';
         });
     </script>
 
