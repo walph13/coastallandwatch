@@ -1,73 +1,16 @@
-<?php
-session_start();
-include 'db_connect.php';
-
-$login_error = '';
-$login_warning = '';
-
-// ==========================================
-// YOUR SECURE BACKEND LOGIC
-// ==========================================
-if (isset($_POST['login'])) {
-    $username = trim($_POST['username']);
-    $password = $_POST['password'];
-
-    $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result->num_rows === 1) {
-        $user = $result->fetch_assoc();
-        
-        $is_password_correct = false;
-        if (password_verify($password, $user['password']) || $password === $user['password']) {
-            $is_password_correct = true;
-        }
-
-        if ($is_password_correct) {
-            if ($user['role'] === 'Resident' && $user['account_status'] === 'Rejected') {
-                $login_error = "Your registration was rejected. Please contact the Barangay Hall.";
-            } 
-            else {
-                $_SESSION['user_id'] = $user['user_id'];
-                $_SESSION['role'] = $user['role'];
-
-                if ($user['role'] === 'Admin') {
-                    header("Location: admin_dashboard.php?view=dashboard");
-                } else {
-                    header("Location: resident_dashboard.php");
-                }
-                exit();
-            }
-        } else {
-            $login_error = "Incorrect password.";
-        }
-    } else {
-        $login_error = "Username not found.";
-    }
-}
-
-$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
-if ($check_info && $check_info->num_rows > 0) {
-    $info = $check_info->fetch_assoc();
-} else {
-    $info = [];
-}
-
-$login_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'tanzalogo.jpg';
-$system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'Barangay Coastal & Land Watch';
-?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>System Login - Coastal & Land Watch</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Login - Coastal Land Watch</title>
+    
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
     
+    <!-- Required for the app to save your login session! -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+
     <style>
         :root {
             --bg-color: #F2EFE9; 
@@ -86,7 +29,7 @@ $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'B
 
         .login-card { 
             background: var(--card-white); 
-            padding: 48px 40px; 
+            padding: 40px 24px; 
             border-radius: 32px; 
             box-shadow: 0 10px 40px rgba(0,0,0,0.03); 
             width: 100%; max-width: 440px; 
@@ -94,19 +37,23 @@ $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'B
 
         .brand-logo {
             width: 100px; height: 100px; object-fit: cover;
-            border-radius: 28px; margin-bottom: 24px;
-            border: 1px solid #E5E7EB;
+            border-radius: 50%; /* Makes the logo a perfect circle like your web app */
+            margin-bottom: 24px;
+            border: 3px solid #ECEFF1;
+            background-color: #fff;
+            padding: 2px;
         }
 
-        .system-title { font-weight: 700; color: var(--text-dark); font-size: 28px; margin-bottom: 8px; letter-spacing: -0.5px; }
-        .system-subtitle { color: var(--text-gray); font-size: 15px; font-weight: 500; margin-bottom: 32px; }
+        .system-title { font-weight: 700; color: var(--text-dark); font-size: 26px; margin-bottom: 8px; letter-spacing: -0.5px; }
+        .system-subtitle { color: var(--text-gray); font-size: 14px; font-weight: 500; margin-bottom: 32px; }
         
-        .form-label { font-weight: 600; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; }
+        .form-label { font-weight: 600; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; text-align: left; display: block; }
         
         .custom-input { 
             border-radius: 16px; border: 1px solid #E5E7EB; 
             padding: 14px 16px; background-color: #F9FAFB; 
             color: var(--text-dark); transition: 0.2s; box-shadow: none !important;
+            font-size: 15px;
         }
         .custom-input:focus { border-color: var(--text-dark); background-color: #fff; }
         
@@ -122,72 +69,65 @@ $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'B
             background-color: var(--text-dark); color: var(--card-lime); 
             border: none; border-radius: 30px; 
             font-weight: 600; font-size: 16px; padding: 16px;
-            transition: 0.2s; margin-top: 8px;
+            transition: 0.2s; margin-top: 8px; width: 100%;
         }
-        .btn-login:hover { transform: scale(0.98); opacity: 0.9; color: var(--card-lime); }
+        .btn-login:active { transform: scale(0.98); opacity: 0.9; }
 
-        .forgot-link { font-size: 13px; font-weight: 600; color: var(--text-gray); text-decoration: none; transition: 0.2s; }
-        .forgot-link:hover { color: var(--text-dark); text-decoration: underline; }
+        .forgot-link { font-size: 13px; font-weight: 600; color: var(--text-gray); text-decoration: none; transition: 0.2s; float: right; margin-bottom: 24px;}
+        .forgot-link:active { color: var(--text-dark); }
 
-        .register-text { font-size: 14px; color: var(--text-gray); margin-top: 32px; font-weight: 500; }
-        .register-link { color: var(--text-dark); font-weight: 700; text-decoration: none; border-bottom: 2px solid var(--card-lime); padding-bottom: 2px; transition: 0.2s; }
-        .register-link:hover { opacity: 0.7; }
+        .register-text { font-size: 14px; color: var(--text-gray); margin-top: 32px; font-weight: 500; text-align: center;}
+        .register-link { color: var(--text-dark); font-weight: 700; text-decoration: none; border-bottom: 2px solid var(--card-lime); padding-bottom: 2px; }
         
-        .alert { border-radius: 16px; font-size: 14px; font-weight: 500; text-align: center; border: none; }
-        .alert-danger { background: #FCE8E8; color: #DC2626; }
-        .alert-warning { background: #FEF9C3; color: #854D0E; }
+        /* Mobile Error Box */
+        #loginError { display: none; border-radius: 16px; font-size: 14px; font-weight: 500; text-align: center; border: none; background: #FCE8E8; color: #DC2626; padding: 12px; margin-bottom: 20px;}
     </style>
 </head>
 <body>
 
-    <div class="login-card">
-        <div class="text-center">
-            <img src="<?php echo htmlspecialchars($login_logo); ?>" alt="Logo" class="brand-logo" onerror="this.src='tanzalogo.jpg'">
-            <h2 class="system-title">Welcome back</h2>
-            <p class="system-subtitle"><?php echo htmlspecialchars($system_title); ?></p>
-        </div>
+    <div class="login-card text-center">
+        <!-- Make sure tanzalogo.jpg is in your www folder! -->
+        <img src="tanzalogo.jpg" alt="Logo" class="brand-logo" onerror="this.src='https://via.placeholder.com/100'">
+        
+        <h2 class="system-title">Welcome back</h2>
+        <p class="system-subtitle">Barangay Coastal & Land Watch</p>
 
-        <?php if(!empty($login_warning)): ?>
-            <div class="alert alert-warning shadow-sm"><i class="ti ti-alert-triangle"></i> <?php echo $login_warning; ?></div>
-        <?php endif; ?>
+        <div id="loginError"><i class="ti ti-x"></i> <span id="errorText"></span></div>
 
-        <?php if(!empty($login_error)): ?>
-            <div class="alert alert-danger shadow-sm"><i class="ti ti-x"></i> <?php echo $login_error; ?></div>
-        <?php endif; ?>
-
-        <form method="POST" action="">
+        <form id="loginForm" style="text-align: left;">
             <div class="mb-3">
                 <label class="form-label">Username</label>
-                <input type="text" name="username" class="form-control custom-input" placeholder="Enter your username" required>
+                <input type="text" id="username" name="username" class="form-control custom-input" placeholder="Enter your username" required>
             </div>
 
             <div class="mb-2">
                 <label class="form-label">Password</label>
                 <div class="input-group">
-                    <input type="password" name="password" id="passwordInput" class="form-control custom-input" placeholder="••••••••" required>
+                    <input type="password" id="password" name="password" class="form-control custom-input" placeholder="••••••••" required>
                     <button class="btn btn-outline-secondary custom-input-btn" type="button" id="togglePassword">
                         <i class="ti ti-eye"></i>
                     </button>
                 </div>
             </div>
 
-           <div class="text-end mb-4">
-                <a href="forgot_password.php" class="forgot-link">Forgot Password?</a>
+            <div style="overflow: hidden;">
+                <a href="forgot_password.html" class="forgot-link">Forgot Password?</a>
             </div>
 
-            <button type="submit" name="login" class="btn w-100 btn-login">
+            <button type="submit" id="loginBtn" class="btn-login">
                 Log In
             </button>
         </form>
 
-        <div class="text-center register-text">
-            Don't have an account? <a href="register.php" class="register-link">Register Here</a>
+        <div class="register-text">
+            Don't have an account? <a href="register.html" class="register-link">Register Here</a>
         </div>
     </div>
 
+    <!-- SCRIPT 1: Eye Icon Toggle -->
     <script>
         const togglePassword = document.querySelector('#togglePassword');
-        const password = document.querySelector('#passwordInput');
+        const password = document.querySelector('#password');
 
         togglePassword.addEventListener('click', function () {
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
@@ -195,5 +135,70 @@ $system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'B
             this.innerHTML = type === 'password' ? '<i class="ti ti-eye"></i>' : '<i class="ti ti-eye-off"></i>';
         });
     </script>
+    
+    <!-- SCRIPT 2: JSON Login Fetch -->
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault(); 
+
+            const loginBtn = document.getElementById('loginBtn');
+            const errorBox = document.getElementById('loginError');
+            const errorText = document.getElementById('errorText');
+            
+            const usernameVal = document.getElementById('username').value;
+            const passwordVal = document.getElementById('password').value;
+
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<i class="ti ti-loader spinner"></i> Verifying...';
+            errorBox.style.display = 'none';
+
+            try {
+                let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_login.php', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'text/plain',
+                        'ngrok-skip-browser-warning': 'true'
+                    },
+                    body: JSON.stringify({
+                        username: usernameVal,
+                        password: passwordVal
+                    })
+                });
+
+                let rawText = await response.text();
+                let result;
+                
+                try {
+                    result = JSON.parse(rawText);
+                } catch(err) {
+                    console.error("PHP Error:", rawText);
+                    errorText.innerText = "Server Error. Check console.";
+                    errorBox.style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = 'Log In';
+                    return;
+                }
+
+                if (result.status === 'success') {
+                    await localforage.setItem('user_session', result.user);
+                    window.location.replace('index.html');
+                } else {
+                    errorText.innerText = result.message;
+                    errorBox.style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = 'Log In';
+                }
+
+            } catch (error) {
+                errorText.innerText = "Network Error. Please check your internet connection.";
+                errorBox.style.display = 'block';
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = 'Log In';
+            }
+        });
+    </script>
+    
+    <!-- Leave app.js link for global functions -->
+    <script src="js/app.js"></script>
 </body>
 </html>
