@@ -541,12 +541,32 @@ html {
             </div>
         </div>
 
+       <?php if(isset($_GET['status']) && $_GET['status'] == 'deleted'): ?>
+    <!-- The Green Success Box -->
+    <div id="deleteAlert" style="background-color: #d1fae5; color: #065f46; padding: 16px; border-radius: 8px; margin-bottom: 20px; font-weight: 500;">
+        Resident account successfully deleted!
+    </div>
+
+    <!-- The Script that cleans the URL and hides the box -->
+    <script>
+        // 1. Instantly wipe "?view=residents&status=deleted" and replace it with the clean link
+        // This stops the message from appearing when you switch sections and come back
+        window.history.replaceState(null, null, "admin_dashboard.php?view=residents");
+
+        // 2. Auto-hide the green box after 3 seconds so you don't have to look at it forever
+        setTimeout(function() {
+            let alertBox = document.getElementById('deleteAlert');
+            if(alertBox) {
+                alertBox.style.transition = "opacity 0.5s ease";
+                alertBox.style.opacity = "0";
+                setTimeout(() => alertBox.style.display = 'none', 500);
+            }
+        }, 3000);
+    </script>
+<?php endif; ?>
+
+        <!-- YOU ACCIDENTALLY DELETED THIS LINE. ADD IT BACK HERE: -->
         <div class="map-card">
-            <?php if (isset($_GET['status']) && $_GET['status'] === 'deleted'): ?>
-                <div style="background: #D1FAE5; color: #065F46; padding: 16px; border-radius: 16px; margin-bottom: 20px; border: 1px solid #A7F3D0; font-weight: 500;">
-                    Resident account successfully deleted!
-                </div>
-            <?php endif; ?>
 
             <div class="reports-header">
                 <h3>Community Residents</h3>
@@ -658,11 +678,8 @@ html {
                     <div class="col-md-12 mb-4">
                         <label class="form-label">Select Target Area</label>
                         <select name="purok_area" class="form-control" required>
-                            <option value="Purok Uno">Purok Uno</option>
-                            <option value="Purok Dos">Purok Dos</option>
-                            <option value="Purok Tres">Purok Tres</option>
-                            <option value="All Areas" selected>All Areas (Barangay-wide)</option>
-                        </select>
+    <option value="All Areas" selected>All Residents</option>
+</select>
                     </div>
                 </div>
 
@@ -789,7 +806,7 @@ html {
                         <input type="text" name="mdrrmo_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['mdrrmo_hotline']) ? $info['mdrrmo_hotline'] : ''); ?>">
                     </div>
                     <div class="col-md-6 mb-3">
-                        <label class="form-label">Rural Health Unit / Clinic Hotline</label>
+                        <label class="form-label">Health Center</label>
                         <input type="text" name="health_center_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['health_center_hotline']) ? $info['health_center_hotline'] : ''); ?>">
                     </div>
                 </div>
@@ -1051,5 +1068,6 @@ html {
         window.open(printUrl, '_blank');
     }
 </script>
+
 </body>
 </html>
