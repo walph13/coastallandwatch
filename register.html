@@ -181,21 +181,31 @@
             <label class="input-label">Full Name</label>
             <input type="text" id="reg_fullname" class="input-field" placeholder="e.g. Juan Dela Cruz" required>
 
-            <div class="row-2">
+           <div class="row-2">
                 <div>
                     <label class="input-label">Username</label>
                     <input type="text" id="reg_username" class="input-field" placeholder="Username" required>
                 </div>
                 <div>
                     <label class="input-label">Password</label>
-                    <input type="password" id="reg_password" class="input-field" placeholder="••••••••" required>
+                    <div style="position: relative; margin-bottom: 20px;">
+                        <input type="password" id="reg_password" class="input-field" placeholder="••••••••" required style="margin-bottom: 0; padding-right: 45px;">
+                        <i class="ti ti-eye" id="togglePassword" style="position: absolute; right: 15px; top: 50%; transform: translateY(-50%); font-size: 20px; color: #555555; cursor: pointer;"></i>
+                    </div>
+                    
+                    <!-- Password Checklist -->
+                    <ul id="password-checklist" style="list-style: none; padding-left: 5px; margin-top: -10px; margin-bottom: 20px; font-size: 12px; color: var(--color-text-muted); font-weight: 600; line-height: 1.6;">
+                        <li id="req-length">☐ At least 8 characters</li>
+                        <li id="req-letter">☐ Contains a letter</li>
+                        <li id="req-number">☐ Contains a number</li>
+                    </ul>
                 </div>
-            </div>
+                </div>
 
             <div class="row-2">
                 <div>
                     <label class="input-label">Phone Number</label>
-                    <input type="tel" id="reg_phone" class="input-field" placeholder="09XX XXX XXXX" required>
+                    <input type="tel" id="reg_phone" class="input-field" placeholder="09XX XXX XXXX" maxlength="11" oninput="this.value = this.value.replace(/[^0-9]/g, '').slice(0, 11);" required>
                 </div>
                 <div>
                     <label class="input-label">Date of Birth</label>
@@ -224,10 +234,29 @@
         </form>
     </div>
 
-    <script>
+   <script>
         document.getElementById('mobileRegisterForm').addEventListener('submit', async (e) => {
             e.preventDefault(); 
             
+            // ---------------------------------------------------------
+            // 🛑 NEW: Strict App Validation
+            // ---------------------------------------------------------
+            const passVal = document.getElementById('reg_password').value;
+            const phoneVal = document.getElementById('reg_phone').value;
+
+            // 1. Check if phone is exactly 11 digits
+            if (phoneVal.length !== 11) {
+                alert("⚠️ Please enter exactly 11 digits for your phone number.");
+                return; // This stops the app from proceeding!
+            }
+
+            // 2. Check if the password meets all 3 checklist rules
+            if (passVal.length < 8 || !/[a-zA-Z]/.test(passVal) || !/[0-9]/.test(passVal)) {
+                alert("⚠️ Your password must meet all the checklist requirements!");
+                return; // This stops the app from proceeding!
+            }
+            // ---------------------------------------------------------
+
             // 1. Change the button to show it's loading (Updated selector to .btn-black)
             const submitBtn = document.querySelector('.btn-black');
             const originalText = submitBtn.innerHTML;
@@ -237,6 +266,8 @@
             // 2. Package all the data exactly like a real web form
             let formData = new FormData();
             formData.append('full_name', document.getElementById('reg_fullname').value);
+            
+            // ... (the rest of your existing code continues here untouched)
             formData.append('username', document.getElementById('reg_username').value);
             formData.append('password', document.getElementById('reg_password').value);
             formData.append('phone_number', document.getElementById('reg_phone').value);
@@ -280,5 +311,61 @@
             }
         });
     </script>
+
+    <script>
+    // Grab the password field and the checklist items
+    const passwordInput = document.getElementById('reg_password');
+    const reqLength = document.getElementById('req-length');
+    const reqLetter = document.getElementById('req-letter');
+    const reqNumber = document.getElementById('req-number');
+
+    // Listen for every keystroke in the password box
+    passwordInput.addEventListener('input', function() {
+        const val = passwordInput.value;
+
+        // 1. Check Length (At least 8 characters)
+        if(val.length >= 8) {
+            reqLength.innerHTML = '✅ At least 8 characters';
+            reqLength.style.color = 'var(--color-text-main)'; // Darker system text when met
+        } else {
+            reqLength.innerHTML = '☐ At least 8 characters';
+            reqLength.style.color = 'var(--color-text-muted)'; // Muted system gray when unmet
+        }
+
+        // 2. Check for Letters (a-z or A-Z)
+        if(/[a-zA-Z]/.test(val)) {
+            reqLetter.innerHTML = '✅ Contains a letter';
+            reqLetter.style.color = 'var(--color-text-main)';
+        } else {
+            reqLetter.innerHTML = '☐ Contains a letter';
+            reqLetter.style.color = 'var(--color-text-muted)';
+        }
+
+        // 3. Check for Numbers (0-9)
+        if(/[0-9]/.test(val)) {
+            reqNumber.innerHTML = '✅ Contains a number';
+            reqNumber.style.color = 'var(--color-text-main)';
+        } else {
+            reqNumber.innerHTML = '☐ Contains a number';
+            reqNumber.style.color = 'var(--color-text-muted)';
+        }
+    });
+</script>
+
+<script>
+    // Eye Icon Toggle Script
+    const togglePassword = document.getElementById('togglePassword');
+    
+    togglePassword.addEventListener('click', function () {
+        // Toggle the input type between 'password' and 'text'
+        const type = passwordInput.getAttribute('type') === 'password' ? 'text' : 'password';
+        passwordInput.setAttribute('type', type);
+        
+        // Swap the icon between open eye and closed eye
+        this.classList.toggle('ti-eye');
+        this.classList.toggle('ti-eye-off');
+    });
+</script>
+
 </body>
 </html>
