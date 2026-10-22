@@ -1,5 +1,6 @@
 // www/js/app.js
-
+// Add this at the top of js/app.js
+const BASE_URL = 'http://192.168.1.50/coastal_land_watch'; // Replace with your IP address or 10.0.2.2
 // 1. Variable to hold the photo data
 let capturedPhotoBase64 = null;
 
@@ -701,13 +702,13 @@ function initReportPinMap() {
     }
 }
 
-// 🌟 COMMUNITY FEED DISPLAY LOGIC
 async function loadCommunityFeed() {
     const feedContainer = document.getElementById('feed_container');
     if (!feedContainer) return;
 
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_community_feed.php', {
+        // FIX 1: Use API_BASE_URL instead of the hardcoded link so it never breaks when Ngrok restarts
+        let response = await fetch(`${API_BASE_URL}/api_get_community_feed.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -720,6 +721,7 @@ async function loadCommunityFeed() {
             result = JSON.parse(rawText);
         } catch (parseError) {
             console.error("Raw PHP Error: ", rawText);
+            feedContainer.innerHTML = `<div style="text-align: center; color: #F87171; padding: 20px;">Server Error. Check Ngrok connection.</div>`;
             return;
         }
 
@@ -745,13 +747,29 @@ async function loadCommunityFeed() {
                     dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 }
 
-                let beforeImg = report.before_photo_path || report.image_data || report.photo || 'https://placehold.co/300x200/e0e0e0/a0a0a0?text=No+Photo';
-                let afterImg = report.after_photo_path || report.after_image || report.after_photo || 'https://placehold.co/300x200/e6f8f3/34d399?text=Cleaned+Area';
+                // FIX 2: Handle both Base64 image strings AND regular filenames
+                let beforeFile = report.before_photo_path || report.image_data || report.photo;
+                let beforeImg = 'https://placehold.co/300x200/e0e0e0/a0a0a0?text=No+Photo';
+                
+                if (beforeFile) {
+                    // If it's a raw Base64 image code, use it directly. Otherwise, add the server folder path.
+                    beforeImg = beforeFile.startsWith('data:image') 
+                        ? beforeFile 
+                        : `${API_BASE_URL}/uploads/reports/${beforeFile}`;
+                }
+
+                let afterFile = report.after_photo_path || report.after_image || report.after_photo;
+                let afterImg = 'https://placehold.co/300x200/e6f8f3/34d399?text=Cleaned+Area';
+                
+                if (afterFile) {
+                    afterImg = afterFile.startsWith('data:image') 
+                        ? afterFile 
+                        : `${API_BASE_URL}/uploads/reports/${afterFile}`;
+                }
 
                 let reporterName = report.reporter_name || report.username || "a concerned resident";
                 let desc = report.description || "Resolved Waste Issue";
 
-                // 🚨 BENTO BOX UI + IMAGE OBJECT-FIT FIX
                 html += `
                     <div style="background: #ffffff; border-radius: 28px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
@@ -782,5 +800,115 @@ async function loadCommunityFeed() {
         }
     } catch (error) {
         console.error("Could not load community feed: ", error);
+        feedContainer.innerHTML = `<div style="text-align: center; color: #F87171; padding: 20px;">Failed to connect to server.</div>`;
     }
+}
+// ==========================================
+// 🚚 BASURA-ALERT (ADMIN BROADCAST) LOGIC
+// ==========================================
+
+// Small helper so we never inject raw admin text as HTML
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.innerText = (text === null || text === undefined) ? '' : text;
+    return div.innerHTML;
+}
+
+// Shows/hides the red dot on the bell icon
+function updateAlertBadge(show) {
+    const badge = document.getElementById('alertBadgeDot');
+    if (badge) badge.style.display = show ? 'block' : 'none';
+}
+
+// Called when the resident actually opens the Alerts modal
+async function loadAlerts() {
+    const container = document.getElementById('alertsContainer');
+    if (!container) return;
+
+    container.innerHTML = `<div style="text-align: center; padding: 30px; color: var(--text-gray);">
+                                <i class="ti ti-loader" style="font-size: 24px;"></i>
+                                <p>Loading alerts...</p>
+                            </div>`;
+
+    try {
+        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api/api_get_alerts.php', {
+            method: 'GET',
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+
+        let result = await response.json();
+
+        if (result.status === 'success' && result.data.length > 0) {
+            let html = '';
+
+            result.data.forEach(item => {
+                const area = item.purok_area || 'All Areas';
+                const message = item.message || '';
+                let dateStr = '';
+                if (item.created_at) {
+                    const parsed = new Date(item.created_at.replace(' ', 'T'));
+                    if (!isNaN(parsed)) {
+                        dateStr = parsed.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+                    }
+                }
+
+                html += `<div style="background: #ffffff; border-radius: 20px; padding: 18px 20px; margin-bottom: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.02); border: 1px solid #F3F4F6;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; gap: 10px;">
+                                <span style="background:#FEF3C7; color:#B45309; font-size:11px; font-weight:700; padding: 4px 10px; border-radius: 20px; text-transform: uppercase; letter-spacing:0.5px; white-space: nowrap;">🚚 ${escapeHtml(area)}</span>
+                                <span style="color:#8E8E93; font-size:12px; white-space: nowrap;">${dateStr}</span>
+                            </div>
+                            <p style="margin:0; color: var(--text-dark); font-size: 14px; line-height:1.5;">${escapeHtml(message)}</p>
+                         </div>`;
+            });
+
+            container.innerHTML = html;
+
+            // Remember the newest alert we've now shown, so the badge only lights up for truly new ones
+            const newestId = item_id(result.data[0]);
+            if (newestId !== null) {
+                await localforage.setItem('last_seen_alert_id', newestId);
+            }
+            updateAlertBadge(false);
+        } else {
+            container.innerHTML = `<div style="text-align: center; padding: 30px; color: var(--text-gray);">
+                                        <i class="ti ti-bell-off" style="font-size: 28px;"></i>
+                                        <p style="margin-top:8px;">No alerts yet.</p>
+                                    </div>`;
+        }
+    } catch (error) {
+        console.error("Could not load alerts: ", error);
+        container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Could not load alerts. Check your connection.</div>';
+    }
+}
+
+// Quietly checks in the background (e.g. right after login) so the bell badge
+// can light up even before the resident taps it
+async function checkForNewAlerts() {
+    try {
+        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api/api_get_alerts.php', {
+            method: 'GET',
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        let result = await response.json();
+
+        if (result.status === 'success' && result.data.length > 0) {
+            const newestId = item_id(result.data[0]);
+            const lastSeenId = await localforage.getItem('last_seen_alert_id');
+
+            if (newestId !== null && (lastSeenId === null || lastSeenId === undefined || newestId > lastSeenId)) {
+                updateAlertBadge(true);
+            }
+        }
+    } catch (error) {
+        console.error("Could not check for new alerts: ", error);
+    }
+}
+
+// The basura_alerts table's primary key column name may be alert_id or id
+// depending on how it was created — this just reads whichever one exists.
+function item_id(row) {
+    if (!row) return null;
+    if (row.alert_id !== undefined) return row.alert_id;
+    if (row.id !== undefined) return row.id;
+    return null;
 }
