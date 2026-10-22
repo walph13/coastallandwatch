@@ -12,6 +12,32 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
 
     <style>
+
+        .app-logo {
+    width: 100px;
+    height: 100px;
+    display: block;
+    margin: 0 auto 15px auto; /* Centers the image and adds space below */
+    border-radius: 50%;       /* Creates the circular shape from your mockup */
+    border: 2px solid #eaeaea; /* Adds the subtle border seen in the design */
+    object-fit: cover;        /* Ensures the logo fits perfectly without stretching */
+}
+
+.welcome-text {
+    text-align: center;
+    margin-bottom: 5px;
+    font-size: 1.5em;
+    font-weight: bold;
+}
+
+.subtitle-text {
+    text-align: center;
+    color: #666;
+    font-size: 0.9em;
+    margin-top: 0;
+    margin-bottom: 25px;
+}
+
         :root {
             --bg-color: #F2EFE9; 
             --card-white: #FFFFFF;
@@ -66,11 +92,17 @@
         .custom-input:focus + .custom-input-btn { border-color: var(--text-dark); background-color: #fff; }
 
         .btn-login { 
-            background-color: var(--text-dark); color: var(--card-lime); 
-            border: none; border-radius: 30px; 
-            font-weight: 600; font-size: 16px; padding: 16px;
-            transition: 0.2s; margin-top: 8px; width: 100%;
-        }
+    background-color: var(--text-dark); 
+    color: #FFFFFF; /* Changed from var(--card-lime) to match the Register button */
+    border: none; 
+    border-radius: 30px; 
+    font-weight: 600; 
+    font-size: 16px; 
+    padding: 16px;
+    transition: 0.2s; 
+    margin-top: 8px; 
+    width: 100%;
+}
         .btn-login:active { transform: scale(0.98); opacity: 0.9; }
 
         .forgot-link { font-size: 13px; font-weight: 600; color: var(--text-gray); text-decoration: none; transition: 0.2s; float: right; margin-bottom: 24px;}
@@ -87,7 +119,7 @@
 
     <div class="login-card text-center">
         <!-- Make sure tanzalogo.jpg is in your www folder! -->
-        <img src="tanzalogo.jpg" alt="Logo" class="brand-logo" onerror="this.src='https://via.placeholder.com/100'">
+        <img src="tanzalogo.jpg" alt="Logo" class="brand-logo">
         
         <h2 class="system-title">Welcome back</h2>
         <p class="system-subtitle">Barangay Coastal & Land Watch</p>
