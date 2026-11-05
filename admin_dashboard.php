@@ -1117,18 +1117,17 @@ if ($view === 'dashboard') {
                 <div style="overflow-x: auto;">
                     <table class="flat-table">
                         <colgroup>
-                            <col style="width: 20%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 20%;">
-                        </colgroup>
-                        <thead>
-                            <tr>
-                                <th>Name</th>
-                                <th>Username</th>
-                                <th>Phone</th>
-                                <th>Valid ID</th>
-                                <th>Status</th>
-                                <th>Action</th>
-                            </tr>
-                        </thead>
+    <col style="width: 25%;"> <col style="width: 20%;"> <col style="width: 20%;"> <col style="width: 15%;"> <col style="width: 20%;">
+</colgroup>
+<thead>
+    <tr>
+        <th>Name</th>
+        <th>Username</th>
+        <th>Valid ID</th>
+        <th>Status</th>
+        <th>Action</th>
+    </tr>
+</thead>
                         <tbody id="residentsTableBody" data-tab="Pending">
                             <?php
                             $residents_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status IN ('Pending', 'Approved', 'Rejected') ORDER BY FIELD(account_status, 'Pending', 'Approved', 'Rejected'), full_name ASC");
@@ -1139,7 +1138,7 @@ if ($view === 'dashboard') {
                                     echo "<tr class='resident-row' data-status='{$status}'>";
                                     echo "<td><strong style='color: var(--text-main);'>" . htmlspecialchars($row['full_name']) . "</strong></td>";
                                     echo "<td style='color: var(--text-muted); font-weight: 500;'>" . htmlspecialchars($row['username']) . "</td>";
-                                    echo "<td>" . htmlspecialchars($row['phone_number']) . "</td>";
+                                    
                                     
                                     echo "<td>";
                                     if (!empty($row['id_photo_path'])) {
@@ -1856,7 +1855,7 @@ if ($view === 'dashboard') {
         if (!emptyRow) {
             emptyRow = document.createElement('tr');
             emptyRow.id = 'emptyStateRow';
-            emptyRow.innerHTML = `<td colspan="6" style="padding: 60px 24px; text-align: center;">
+            emptyRow.innerHTML = `<td colspan="5" style="padding: 60px 24px; text-align: center;">
                 <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; background: var(--bg-body); margin-bottom: 16px;">
                     <i class="ti ti-mood-smile" style="font-size: 32px; color: #9ca3af;"></i>
                 </div>
