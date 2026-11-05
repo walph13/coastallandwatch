@@ -5,13 +5,56 @@ include 'db_connect.php';
 // -----------------------------------------------------------------------------
 // 1. SECURITY CHECK
 // -----------------------------------------------------------------------------
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Admin') {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'Admin') {
     header("Location: login.php");
     exit();
 }
 
-$admin_id = $_SESSION['user_id'];
-$admin_data = $conn->query("SELECT full_name FROM users WHERE user_id = $admin_id")->fetch_assoc();
+// Escape helper for all HTML output
+if (!function_exists('h')) {
+    function h($value) { return htmlspecialchars((string)($value ?? ''), ENT_QUOTES, 'UTF-8'); }
+}
+
+// CSRF token: every POST form below must send it back as "csrf"
+if (empty($_SESSION['csrf'])) {
+    $_SESSION['csrf'] = bin2hex(random_bytes(32));
+}
+$csrf = $_SESSION['csrf'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (!isset($_POST['csrf']) || !hash_equals($csrf, (string)$_POST['csrf'])) {
+        http_response_code(419);
+        exit('Your session token is invalid or expired. Please go back, refresh the page and try again.');
+    }
+}
+
+// Only known views are allowed; anything else falls back to the dashboard
+$view_titles = [
+    'dashboard' => 'Dashboard',
+    'reports'   => 'Waste Reports',
+    'residents' => 'Resident Management',
+    'alert'     => 'Basura-Alert Broadcast',
+    'settings'  => 'System Settings',
+];
+$view = $_GET['view'] ?? 'dashboard';
+if (!is_string($view) || !isset($view_titles[$view])) { $view = 'dashboard'; }
+
+$admin_id = (int)$_SESSION['user_id'];
+$stmt = $conn->prepare("SELECT full_name, password FROM users WHERE user_id = ?");
+$stmt->bind_param("i", $admin_id);
+$stmt->execute();
+$admin_data = $stmt->get_result()->fetch_assoc() ?: [];
+$stmt->close();
+$admin_name = $admin_data['full_name'] ?? 'Admin User';
+
+if (!isset($_SESSION['last_seen_report_id'])) {
+    $_SESSION['last_seen_report_id'] = 0;
+}
+
+if ($view === 'reports') {
+    $max_id_query = $conn->query("SELECT MAX(report_id) as max_id FROM waste_reports");
+    $max_id = $max_id_query->fetch_assoc()['max_id'] ?? 0;
+    $_SESSION['last_seen_report_id'] = $max_id;
+}
 
 // -----------------------------------------------------------------------------
 // 2. FETCH BARANGAY INFO
@@ -24,1032 +67,2157 @@ if ($check_info && $check_info->num_rows > 0) {
     $check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
     $info = $check_info->fetch_assoc();
 }
-$info_id = $info['id'];
+$info_id = (int)$info['id'];
 
 // -----------------------------------------------------------------------------
 // 3. BACKEND ACTION HANDLERS
 // -----------------------------------------------------------------------------
+$update_success = false;
+$update_error = '';
+$pass_success = false;
+$pass_error = '';
+$alert_error = '';
+$alert_sent = isset($_GET['sent']);
+$alert_draft = 'The garbage truck is currently near your area. Please prepare your segregated waste.';
 
-// ACTION: Basura-Alert Submission
-if (isset($_POST['send_basura_alert'])) {
-    $purok = $_POST['purok_area'];
-    $message = $_POST['alert_message'];
+/**
+ * Validates and stores an uploaded JPG/PNG (max 2MB). Returns the new file name,
+ * or $current when nothing was uploaded or validation failed ($error explains why).
+ */
+function save_image_upload($field, $dir, $prefix, $current, &$error) {
+    if (empty($_FILES[$field]['name'])) { return $current; }
+    $f = $_FILES[$field];
+    if ($f['error'] !== UPLOAD_ERR_OK) { $error = 'Image upload failed. Please try again.'; return $current; }
+    if ($f['size'] > 2 * 1024 * 1024) { $error = 'Image is larger than 2MB.'; return $current; }
+    $img = @getimagesize($f['tmp_name']);
+    $types = [IMAGETYPE_JPEG => 'jpg', IMAGETYPE_PNG => 'png'];
+    if (!$img || !isset($types[$img[2]])) { $error = 'Only JPG or PNG images are allowed.'; return $current; }
+    if (!is_dir($dir)) { mkdir($dir, 0755, true); }
+    $name = $prefix . bin2hex(random_bytes(8)) . '.' . $types[$img[2]];
+    if (!move_uploaded_file($f['tmp_name'], $dir . $name)) { $error = 'Could not save the image.'; return $current; }
+    return $name;
+}
 
-    $alert_sql = "INSERT INTO basura_alerts (purok_area, admin_id, message) VALUES (?, ?, ?)";
-    $stmt = $conn->prepare($alert_sql);
-    $stmt->bind_param("sis", $purok, $admin_id, $message);
-    
+// ---- Save barangay profile -------------------------------------------------
+if (isset($_POST['update_info'])) {
+    $field = function ($key) { return trim((string)($_POST[$key] ?? '')); };
+
+    $b_name = $field('barangay_name');
+    if ($b_name === '') { $b_name = (string)($info['barangay_name'] ?? ''); }
+
+    $logo_file_name = save_image_upload('barangay_logo', 'uploads/logo/', 'logo_', (string)($info['logo_path'] ?? ''), $update_error);
+    $sec_pic_name   = save_image_upload('secretary_pic', 'uploads/profiles/', 'sec_', (string)($info['secretary_profile_pic'] ?? ''), $update_error);
+
+    // Stored as plain text. Escape when displaying (htmlspecialchars / esc()), not when saving.
+    $custom_hotlines_arr = [];
+    $names = $_POST['custom_hotline_names'] ?? [];
+    $numbers = $_POST['custom_hotline_numbers'] ?? [];
+    if (is_array($names) && is_array($numbers)) {
+        foreach ($names as $i => $n) {
+            $name = trim((string)$n);
+            $num  = trim((string)($numbers[$i] ?? ''));
+            if ($name !== '' && $num !== '') {
+                $custom_hotlines_arr[] = ['name' => mb_substr($name, 0, 100), 'number' => mb_substr($num, 0, 50)];
+            }
+        }
+    }
+    $custom_hotlines_json = json_encode($custom_hotlines_arr);
+
+    $values = [
+        $b_name, $field('captain_name'), $field('captain_contact'),
+        $field('secretary_name'), $field('secretary_contact'), $field('contact_number'),
+        $field('full_address'), $field('zip_code'), $field('region'),
+        $logo_file_name, $sec_pic_name,
+        $field('system_subtitle'), $field('system_description'), $field('city'), $field('municipal'),
+        $field('office_hours'), $field('emergency_hotlines'),
+        $field('pnp_hotline'), $field('bfp_hotline'), $field('mdrrmo_hotline'), $field('health_center_hotline'),
+        $custom_hotlines_json,
+        $info_id
+    ];
+
+    $stmt = $conn->prepare("UPDATE barangay_information SET barangay_name=?, captain_name=?, captain_contact=?, secretary_name=?, secretary_contact=?, contact_number=?, full_address=?, zip_code=?, region=?, logo_path=?, secretary_profile_pic=?, system_subtitle=?, system_description=?, city=?, municipal=?, office_hours=?, emergency_hotlines=?, pnp_hotline=?, bfp_hotline=?, mdrrmo_hotline=?, health_center_hotline=?, custom_hotlines=? WHERE id=?");
+    $stmt->bind_param(str_repeat('s', 22) . 'i', ...$values);
+
     if ($stmt->execute()) {
-        echo "<script>alert('Basura-Alert successfully broadcasted to " . $purok . "!'); window.location.href='admin_dashboard.php?view=alert';</script>";
-        exit();
+        $update_success = true;
+        $info = $conn->query("SELECT * FROM barangay_information LIMIT 1")->fetch_assoc();
     } else {
-        echo "<script>alert('Database error: Failed to send alert.');</script>";
+        $update_error = $update_error !== '' ? $update_error : 'Could not save the profile. Please try again.';
+    }
+    $stmt->close();
+}
+
+// ---- Change password -------------------------------------------------------
+if (isset($_POST['change_password'])) {
+    $current_pass = (string)($_POST['current_password'] ?? '');
+    $new_pass     = (string)($_POST['new_password'] ?? '');
+    $confirm_pass = (string)($_POST['confirm_password'] ?? '');
+    $stored       = (string)($admin_data['password'] ?? '');
+
+    // The second check only exists for old plain-text passwords; they become hashed on the next change.
+    $current_ok = password_verify($current_pass, $stored) || ($stored !== '' && hash_equals($stored, $current_pass));
+
+    if (!$current_ok) {
+        $pass_error = "Current password is incorrect.";
+    } elseif (strlen($new_pass) < 8) {
+        $pass_error = "New password must be at least 8 characters.";
+    } elseif ($new_pass !== $confirm_pass) {
+        $pass_error = "New passwords do not match.";
+    } else {
+        $hashed = password_hash($new_pass, PASSWORD_DEFAULT);
+        $stmt = $conn->prepare("UPDATE users SET password = ? WHERE user_id = ?");
+        $stmt->bind_param("si", $hashed, $admin_id);
+        if ($stmt->execute()) {
+            session_regenerate_id(true);
+            $pass_success = true;
+        } else {
+            $pass_error = "Could not update the password. Please try again.";
+        }
+        $stmt->close();
     }
 }
 
-// ACTION: Approve or Reject Residents
-if (isset($_GET['resident_action']) && isset($_GET['id'])) {
-    $target_id = intval($_GET['id']);
-    $action = $_GET['resident_action'];
-    
-    if ($action === 'approve') {
-        $conn->query("UPDATE users SET account_status='Approved' WHERE user_id=$target_id");
-        echo "<script>alert('Resident successfully approved!'); window.location.href='admin_dashboard.php?view=residents';</script>";
-        exit();
-    } elseif ($action === 'reject') {
-        $conn->query("UPDATE users SET account_status='Rejected' WHERE user_id=$target_id");
-        echo "<script>alert('Resident application rejected.'); window.location.href='admin_dashboard.php?view=residents';</script>";
-        exit();
+// ---- Send Basura-Alert -----------------------------------------------------
+if (isset($_POST['send_basura_alert'])) {
+    $purok = 'All Areas'; // only audience available for now
+    $message = trim((string)($_POST['alert_message'] ?? ''));
+    $alert_draft = $message;
+
+    if ($message === '') {
+        $alert_error = 'Please type a message before sending.';
+    } elseif (mb_strlen($message) > 250) {
+        $alert_error = 'Message is too long. Please keep it to 250 characters or fewer.';
+    } else {
+        $stmt = $conn->prepare("INSERT INTO basura_alerts (purok_area, admin_id, message) VALUES (?, ?, ?)");
+        $stmt->bind_param("sis", $purok, $admin_id, $message);
+        if ($stmt->execute()) {
+            header("Location: admin_dashboard.php?view=alert&sent=1");
+            exit();
+        }
+        $alert_error = 'The alert could not be saved. Please try again.';
+        $stmt->close();
     }
 }
 
-// ACTION: Delete Resident
-if (isset($_POST['delete_resident_id'])) {
-    $del_id = intval($_POST['delete_resident_id']);
-    $conn->query("DELETE FROM users WHERE user_id = $del_id AND role = 'Resident'");
-    echo "<script>alert('Resident account permanently deleted.'); window.location.href='admin_dashboard.php?view=residents&status=deleted';</script>";
+// ---- Approve / reject / restore a resident (POST + CSRF) -------------------
+if (isset($_POST['resident_action'], $_POST['id'])) {
+    $target_id = (int)$_POST['id'];
+    $status_map = ['approve' => 'Approved', 'reject' => 'Rejected'];
+    $action = (string)$_POST['resident_action'];
+    $return_view = in_array($_POST['return'] ?? '', ['residents', 'dashboard'], true) ? $_POST['return'] : 'residents';
+
+    if (isset($status_map[$action])) {
+        $new_status = $status_map[$action];
+        $stmt = $conn->prepare("UPDATE users SET account_status = ? WHERE user_id = ? AND role = 'Resident'");
+        $stmt->bind_param("si", $new_status, $target_id);
+        $stmt->execute();
+        $stmt->close();
+    }
+    header("Location: admin_dashboard.php?view=" . $return_view);
     exit();
 }
 
-// ACTION: Update Barangay Settings
-$update_success = false;
-$update_error = '';
+// ---- Delete a resident (POST + CSRF, residents only) -----------------------
+if (isset($_POST['delete_resident_id'])) {
+    $del_id = (int)$_POST['delete_resident_id'];
+    $delete_result = 'notfound';
+    $return_tab = 'Approved';
 
-if (isset($_POST['update_info'])) {
-    $b_name      = $_POST['barangay_name'];
-    $captain     = $_POST['captain_name'];
-    $secretary   = $_POST['secretary_name']; 
-    $contact     = $_POST['contact_number'];
-    $address     = $_POST['full_address'];
-    $zip         = $_POST['zip_code'];
-    $region      = $_POST['region'];
-    $subtitle    = $_POST['system_subtitle'];
-    $description = $_POST['system_description'];
-    $city        = $_POST['city'];
-    $municipal   = $_POST['municipal'];
-    $office_hrs  = $_POST['office_hours'];
-    $hotlines    = $_POST['emergency_hotlines'];
-    $pnp         = $conn->real_escape_string($_POST['pnp_hotline']);
-    $bfp         = $conn->real_escape_string($_POST['bfp_hotline']);
-    $mdrrmo      = $conn->real_escape_string($_POST['mdrrmo_hotline']);
-    $health      = $conn->real_escape_string($_POST['health_center_hotline']);
-    $logo_file_name = isset($info['logo_path']) ? $info['logo_path'] : '';
+    try {
+        // Remember the ID photo and tab first, so the file can be removed once the account is gone
+        $stmt = $conn->prepare("SELECT id_photo_path, account_status FROM users WHERE user_id = ? AND role = 'Resident'");
+        $stmt->bind_param("i", $del_id);
+        $stmt->execute();
+        $target = $stmt->get_result()->fetch_assoc();
+        $stmt->close();
 
-    if (!empty($_FILES["barangay_logo"]["name"])) {
-        $target_dir = "uploads/logo/";
-        if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
-        $new_logo = time() . "_" . basename($_FILES["barangay_logo"]["name"]);
-        $target_file = $target_dir . $new_logo;
-        $file_extension = strtolower(pathinfo($target_file, PATHINFO_EXTENSION));
-        if (in_array($file_extension, array("jpg", "jpeg", "png"))) {
-            if (move_uploaded_file($_FILES["barangay_logo"]["tmp_name"], $target_file)) {
-                $logo_file_name = $new_logo;
+        if ($target) {
+            $return_tab = ($target['account_status'] ?? '') === 'Rejected' ? 'Rejected' : 'Approved';
+
+            $stmt = $conn->prepare("DELETE FROM users WHERE user_id = ? AND role = 'Resident'");
+            $stmt->bind_param("i", $del_id);
+            $stmt->execute();
+            $removed = $stmt->affected_rows > 0;
+            $stmt->close();
+
+            if ($removed) {
+                $delete_result = 'deleted';
+                $id_file = basename((string)($target['id_photo_path'] ?? ''));
+                if ($id_file !== '' && is_file('uploads/ids/' . $id_file)) {
+                    @unlink('uploads/ids/' . $id_file);
+                }
             }
-        } else {
-            $update_error = "Only JPG and PNG files are allowed for the logo.";
         }
+    } catch (mysqli_sql_exception $e) {
+        // Usually a database link (foreign key) that still points to this resident
+        error_log('Delete resident failed: ' . $e->getMessage());
+        $delete_result = 'blocked';
     }
 
-    if (empty($update_error)) {
-        $update_sql = "UPDATE barangay_information SET 
-                        barangay_name      = ?, 
-                        captain_name       = ?, 
-                        secretary_name     = ?, 
-                        contact_number     = ?, 
-                        full_address       = ?, 
-                        zip_code           = ?, 
-                        region             = ?, 
-                        logo_path          = ?,
-                        system_subtitle    = ?,
-                        system_description = ?,
-                        city               = ?,
-                        municipal          = ?,
-                        office_hours       = ?,
-                        emergency_hotlines = ?,
-                        pnp_hotline        = ?,
-                        bfp_hotline        = ?,
-                        mdrrmo_hotline     = ?,
-                        health_center_hotline = ?
-                       WHERE id = ?";
-                       
-        $stmt = $conn->prepare($update_sql);
-        $stmt->bind_param(
-            "ssssssssssssssssssi",
-            $b_name, $captain, $secretary, $contact, $address, $zip, $region,
-            $logo_file_name, $subtitle, $description,
-            $city, $municipal, $office_hrs, $hotlines,
-            $pnp, $bfp, $mdrrmo, $health, $info_id
-        );
-        
-        if ($stmt->execute()) {
-            $update_success = true;
-            $info = $conn->query("SELECT * FROM barangay_information LIMIT 1")->fetch_assoc();
-        } else {
-            $update_error = "Failed to update information in the database.";
+    header("Location: admin_dashboard.php?view=residents&tab=" . $return_tab . "&status=" . $delete_result);
+    exit();
+}
+
+// -----------------------------------------------------------------------------
+// 4. DATA FOR THE CURRENT VIEW
+// -----------------------------------------------------------------------------
+
+// Sidebar logo: use the uploaded logo when it exists, otherwise the default
+$logo_file = (string)($info['logo_path'] ?? '');
+$logo_src = ($logo_file !== '' && file_exists('uploads/logo/' . $logo_file)) ? 'uploads/logo/' . $logo_file : 'tanzalogo.jpg';
+
+// Residents for the modal. Only the fields the modal needs are sent to the browser (never password hashes).
+$all_residents = [];
+if ($view === 'residents') {
+    $report_counts = [];
+    $rc = $conn->query("SELECT resident_id, COUNT(*) AS c FROM waste_reports GROUP BY resident_id");
+    if ($rc) {
+        while ($x = $rc->fetch_assoc()) { $report_counts[(int)$x['resident_id']] = (int)$x['c']; }
+    }
+
+    $res_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status IN ('Pending', 'Approved', 'Rejected')");
+    if ($res_query) {
+        while ($r = $res_query->fetch_assoc()) {
+            $all_residents[$r['user_id']] = [
+                'user_id'       => (int)$r['user_id'],
+                'full_name'     => $r['full_name'] ?? '',
+                'username'      => $r['username'] ?? '',
+                'phone_number'  => $r['phone_number'] ?? '',
+                'address'       => $r['address_purok_sitio'] ?? ($r['address'] ?? ''),
+                'date_of_birth' => $r['date_of_birth'] ?? ($r['dob'] ?? ''),
+                'id_photo_path' => $r['id_photo_path'] ?? '',
+                'account_status'=> $r['account_status'] ?? '',
+                'report_count'  => $report_counts[(int)$r['user_id']] ?? 0,
+            ];
         }
     }
 }
 
-// -----------------------------------------------------------------------------
-// 4. DATA FETCHING FOR VIEWS
-// -----------------------------------------------------------------------------
-
-// Fetch GIS Map Data
-$map_query = $conn->query("
-    SELECT w.report_id, w.description, w.latitude, w.longitude, w.status, 
-           w.before_photo_path, w.created_at, u.full_name 
-    FROM waste_reports w 
-    JOIN users u ON w.resident_id = u.user_id 
-    WHERE w.latitude IS NOT NULL AND w.longitude IS NOT NULL
-");
+// Dashboard numbers (real values instead of hardcoded text)
+$stat_pending = $stat_cleaned = $stat_total = $stat_week = $stat_pending_week = 0;
+$stat_active = $stat_awaiting = $stat_cleaned_pct = 0;
 $map_data = [];
-while($row = $map_query->fetch_assoc()) {
-    $map_data[] = $row;
+if ($view === 'dashboard') {
+    $s = $conn->query("SELECT COUNT(*) AS total,
+        COALESCE(SUM(status='Pending'),0) AS pending,
+        COALESCE(SUM(status='Cleaned'),0) AS cleaned,
+        COALESCE(SUM(created_at >= NOW() - INTERVAL 7 DAY),0) AS week,
+        COALESCE(SUM(status='Pending' AND created_at >= NOW() - INTERVAL 7 DAY),0) AS pending_week
+        FROM waste_reports");
+    if ($s && ($row = $s->fetch_assoc())) {
+        $stat_total = (int)$row['total'];
+        $stat_pending = (int)$row['pending'];
+        $stat_cleaned = (int)$row['cleaned'];
+        $stat_week = (int)$row['week'];
+        $stat_pending_week = (int)$row['pending_week'];
+        $stat_cleaned_pct = $stat_total > 0 ? (int)round($stat_cleaned / $stat_total * 100) : 0;
+    }
+    $s = $conn->query("SELECT COALESCE(SUM(account_status='Approved'),0) AS active, COALESCE(SUM(account_status='Pending'),0) AS awaiting FROM users WHERE role='Resident'");
+    if ($s && ($row = $s->fetch_assoc())) {
+        $stat_active = (int)$row['active'];
+        $stat_awaiting = (int)$row['awaiting'];
+    }
+
+    // LEFT JOIN so reports from a deleted resident still show up
+    $map_query = $conn->query("SELECT w.report_id, w.description, w.latitude, w.longitude, w.status, w.before_photo_path, w.created_at, COALESCE(u.full_name, 'Deleted user') AS full_name FROM waste_reports w LEFT JOIN users u ON w.resident_id = u.user_id WHERE w.latitude IS NOT NULL AND w.longitude IS NOT NULL");
+    if ($map_query) {
+        while ($row = $map_query->fetch_assoc()) { $map_data[] = $row; }
+    }
+
+    // ---- Reports submitted AND resolved per week / per month for the line chart (last 12 of each) ----
+    $chart_data = ['weekly' => [], 'monthly' => [], 'estimated' => false];
+    $first_week = new DateTime('monday this week');
+    $first_week->setTime(0, 0)->modify('-11 weeks');
+    $first_month = new DateTime('first day of this month');
+    $first_month->setTime(0, 0)->modify('-11 months');
+
+    // When was each report cleaned? Databases with the cleaned_at column know exactly;
+    // without it, a cleaned report is counted in the period it was submitted (an estimate).
+    $col = $conn->query("SHOW COLUMNS FROM waste_reports LIKE 'cleaned_at'");
+    $has_cleaned_at = ($col && $col->num_rows > 0);
+    $chart_data['estimated'] = !$has_cleaned_at;
+    $cleaned_date = $has_cleaned_at ? 'COALESCE(cleaned_at, created_at)' : 'created_at';
+
+    $count_by = function (string $kind, string $date_expr, bool $only_cleaned, string $from) use ($conn): array {
+        $bucket = ($kind === 'week')
+            ? "DATE_SUB(DATE($date_expr), INTERVAL WEEKDAY($date_expr) DAY)"
+            : "DATE_FORMAT($date_expr, '%Y-%m')";
+        $where = ($only_cleaned ? "status = 'Cleaned' AND " : '') . "$date_expr >= ?";
+        $counts = [];
+        $stmt = $conn->prepare("SELECT $bucket AS bucket, COUNT(*) AS c FROM waste_reports WHERE $where GROUP BY bucket");
+        if ($stmt) {
+            $stmt->bind_param("s", $from);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($r = $res->fetch_assoc()) { $counts[$r['bucket']] = (int)$r['c']; }
+            $stmt->close();
+        }
+        return $counts;
+    };
+
+    $from_week  = $first_week->format('Y-m-d');
+    $from_month = $first_month->format('Y-m-d');
+    $reported_w = $count_by('week',  'created_at',  false, $from_week);
+    $resolved_w = $count_by('week',  $cleaned_date, true,  $from_week);
+    $reported_m = $count_by('month', 'created_at',  false, $from_month);
+    $resolved_m = $count_by('month', $cleaned_date, true,  $from_month);
+
+    for ($i = 0; $i < 12; $i++) {
+        $start = (clone $first_week)->modify("+$i weeks");
+        $end   = (clone $start)->modify('+6 days');
+        $key   = $start->format('Y-m-d');
+        $chart_data['weekly'][] = [
+            'label'    => $start->format('M j'),
+            'full'     => $start->format('M j') . ' – ' . $end->format('M j, Y'),
+            'count'    => $reported_w[$key] ?? 0,
+            'resolved' => $resolved_w[$key] ?? 0,
+        ];
+
+        $month = (clone $first_month)->modify("+$i months");
+        $key   = $month->format('Y-m');
+        $chart_data['monthly'][] = [
+            'label'    => ($i === 0 || $month->format('n') === '1') ? $month->format("M 'y") : $month->format('M'),
+            'full'     => $month->format('F Y'),
+            'count'    => $reported_m[$key] ?? 0,
+            'resolved' => $resolved_m[$key] ?? 0,
+        ];
+    }
 }
 ?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Dashboard - Barangay GIS System</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard | Coastal and Land Watch</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+  <style>
+    :root {
+        /* EXACT COLOR PALETTE FROM THE HTML PROVIDED */
+        --bg-body: #f3f4f6; 
+        --bg-surface: #ffffff;
+        
+        /* Sidebar */
+        --sidebar-bg: #3F4D67; 
+        --sidebar-hover: #344056; 
+        --sidebar-text: #C9CFDA; 
+        --sidebar-text-active: #ffffff;
+        --sidebar-header-text: #B3BCCC;
+        --sidebar-footer-bg: #344056;
+        
+        /* Accents - CHANGED TO SKY BLUE */
+        --active-tab-blue: #0ea5e9;
+        --primary: #0ea5e9; 
+        --primary-light: #e0f2fe; 
+        --primary-dark: #0284c7; 
+        --avatar-text-dark: #0369a1;
+        --primary-strong: #0369a1;
+        --primary-strong-hover: #075985;
+        --alert-red: #EF4444;
+        
+        /* Text */
+        --text-main: #1F2937; 
+        --text-muted: #687280; 
+        --border-color: #e5e7eb;
+        
+        /* Welcome Banner */
+        --banner-bg: #0284c7;
+        
+        /* Shadows & Radius */
+        --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
+        --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        --radius-card: 12px;
+    }
+
+    /* Always reserve the scrollbar space so the top bar sits in the same place on every page */
+    html { overflow-y: scroll; }
+    body { font-family: 'Inter', sans-serif; background-color: var(--bg-body); color: var(--text-main); margin: 0; padding: 0; overflow-x: hidden; font-size: 14px; }
     
-    <!-- CSS Dependencies -->
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    .app-container { display: flex; min-height: 100vh; }
+    .sidebar { width: 260px; background: var(--sidebar-bg); display: flex; flex-direction: column; position: fixed; top: 0; bottom: 0; left: 0; z-index: 50; }
     
-    <!-- JS Dependencies -->
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    .workspace-header { padding: 32px 20px 24px 20px; display: flex; align-items: center; justify-content: center; border-bottom: 1px solid var(--sidebar-hover); }
+    .workspace-brand { display: flex; flex-direction: column; align-items: center; gap: 16px; width: 100%; text-align: center;}
+    .workspace-logo { width: 85px; height: 85px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 3px rgba(255,255,255,0.15); }
+    .workspace-text h2 { margin: 0; font-size: 18px; font-weight: 700; color: var(--sidebar-text-active); line-height: 1.4; letter-spacing: 0.5px; }
+    
+    .sidebar-menu { padding: 10px 16px; flex: 1; overflow-y: auto; }
+    .menu-label { font-size: 11px; color: var(--sidebar-header-text); font-weight: 600; padding: 16px 16px 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    
+    .nav-link { display: flex; align-items: center; gap: 12px; padding: 12px 16px; padding-left: 12px; color: var(--sidebar-text); text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; transition: 0.2s; margin-bottom: 4px; border-left: 4px solid transparent; }
+    .nav-link i { font-size: 20px; display: inline-block; width: 20px; text-align: center; color: var(--sidebar-text); }
+    .nav-link:hover { background: var(--sidebar-hover); color: var(--sidebar-text-active); }
+    
+    /* ACTIVE TAB COLORS */
+    .nav-link.active { background: var(--sidebar-hover); color: var(--sidebar-text-active); border-left: 4px solid var(--active-tab-blue); border-radius: 4px 8px 8px 4px; font-weight: 600; }
+    .nav-link.active i { color: var(--active-tab-blue); }
+    
+    .user-footer { padding: 20px; border-top: 1px solid #2B3548; background: var(--sidebar-footer-bg); display: flex; align-items: center; justify-content: space-between; }
+    .user-info { display: flex; align-items: center; gap: 12px; }
+    .user-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--primary-dark); color: #fff; display: flex; justify-content: center; align-items: center; font-weight: 600; font-size: 14px; overflow: hidden; }
+    .user-text h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--sidebar-text-active); }
+    .user-text p { margin: 0; font-size: 11px; color: var(--sidebar-header-text); }
+    .user-footer a { color: var(--sidebar-text); transition: 0.2s; }
+    .user-footer a:hover { color: var(--alert-red); }
 
-    <style>
-        :root {
-            --bg-color: #F2EFE9; 
-            --card-white: #FFFFFF;
-            --card-lime: #D9FA4A; 
-            --text-dark: #1A1A1A;
-            --text-gray: #6B7280;
-        }
+    .main-wrapper { flex: 1; min-width: 0; margin-left: 260px; display: flex; flex-direction: column; }
+    
+    /* TOPBAR */
+    .topbar { position: sticky; top: 0; z-index: 40; background: var(--sidebar-bg); border-bottom: 1px solid var(--sidebar-hover); height: 70px; padding: 0 32px; display: flex; justify-content: space-between; align-items: center; }
+    .topbar-left { min-width: 0; white-space: nowrap; display: flex; align-items: center; gap: 8px; color: #ffffff; font-size: 15px; font-weight: 600; }
+    .topbar-left i { color: var(--sidebar-text); font-size: 22px; }
+    .topbar-right { display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
+    .topbar-icons { display: flex; gap: 16px; color: #ffffff; font-size: 20px; align-items: center; }
+    
+    .notification-btn { border: 0; color: #fff; padding: 0; font: inherit; position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s ease; background: rgba(0, 0, 0, 0.2); }
+    .notification-btn:hover { background: rgba(0, 0, 0, 0.3); color: var(--sidebar-text); }
+    .notification-badge-count { position: absolute; top: 4px; right: 4px; background: var(--alert-red); color: white; font-size: 10px; font-weight: bold; width: 16px; height: 16px; display: none; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid var(--sidebar-bg); }
+    
+    .notification-dropdown { position: absolute; top: 60px; right: 32px; width: 320px; background: var(--bg-surface); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); border: 1px solid var(--border-color); z-index: 100; display: none; flex-direction: column; overflow: hidden; color: var(--text-main); }
+    .notification-dropdown.active { display: flex; }
+    .notif-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #f9fafb; }
+    .notif-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
+    .notif-list { max-height: 300px; overflow-y: auto; }
+    .notif-item { padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-decoration: none; display: block; transition: 0.2s; }
+    .notif-item:hover { background: #f9fafb; }
+    .notif-item .title { font-size: 13px; font-weight: 600; color: var(--primary); margin-bottom: 4px; }
+    .notif-item .desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 4px; }
+    .notif-item .time { font-size: 11px; color: #6b7280; display: flex; align-items: center; gap: 4px; }
+    .notif-footer { padding: 12px; text-align: center; border-top: 1px solid var(--border-color); background: #f9fafb; }
+    .notif-footer a { font-size: 13px; color: var(--primary); text-decoration: none; font-weight: 500; }
 
-        body { 
-            background-color: var(--bg-color); 
-            color: var(--text-dark); 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            margin: 0; 
-            padding: 0; 
-        }
-        
-        .main-wrapper { max-width: 1100px; margin: 0 auto; padding: 40px 20px; }
+    .live-datetime { display: flex; align-items: center; justify-content: center; gap: 8px; box-sizing: border-box; height: 40px; min-width: 260px; flex-shrink: 0; white-space: nowrap; line-height: 1; font-variant-numeric: tabular-nums; background: rgba(0, 0, 0, 0.2); border: 1px solid rgba(0, 0, 0, 0.2); padding: 0 14px; border-radius: 8px; font-size: 13px; font-weight: 500; color: #ffffff; }
+    .live-datetime i { color: var(--sidebar-text); font-size: 16px; }
 
-        /* CENTERED NAV */
-        .top-nav { position: relative; display: flex; justify-content: space-between; align-items: center; margin-bottom: 60px; }
-        .nav-brand { display: flex; align-items: center; gap: 12px; font-size: 18px; font-weight: 500; color: var(--text-dark); text-decoration: none; z-index: 10; }
-        .brand-icon { background: var(--text-dark); color: var(--card-lime); width: 36px; height: 36px; border-radius: 8px; display: flex; justify-content: center; align-items: center; font-weight: bold; }
-        
-        .nav-links { position: absolute; left: 50%; transform: translateX(-50%); display: flex; gap: 30px; z-index: 10; }
-        .nav-links a { color: var(--text-gray); text-decoration: none; font-size: 15px; transition: 0.2s; cursor: pointer; }
-        .nav-links a.active, .nav-links a:hover { color: var(--text-dark); font-weight: 500; }
-        
-        .notif-wrapper { position: relative; z-index: 10; }
-        .btn-notif { background: var(--text-dark); color: var(--card-lime); border: none; padding: 12px 24px; border-radius: 30px; font-weight: 500; font-size: 14px; cursor: pointer; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
-        .btn-notif:hover { transform: scale(0.98); opacity: 0.9; }
+    .content-area { padding: 32px; flex: 1; }
+    
+    /* WELCOME BANNER */
+    .welcome-banner { background: var(--banner-bg); border-radius: var(--radius-card); padding: 32px; color: white; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; box-shadow: var(--shadow-md); }
+    .welcome-text h1 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
+    .welcome-text p { margin: 0; font-size: 14px; color: #ffffff; }
+    .welcome-btn { background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid rgba(255, 255, 255, 0.3); padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+    .welcome-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.4); transform: translateY(-1px); }
 
-        /* HEADERS */
-        .header-section { margin-bottom: 40px; display: flex; justify-content: space-between; align-items: flex-end; flex-wrap: wrap; gap: 20px; }
-        .header-section h1 { font-size: 42px; line-height: 1.2; margin: 0 0 10px 0; font-weight: 500; letter-spacing: -1px; }
-        .header-section p { font-size: 16px; color: var(--text-gray); margin: 0; }
+    .flat-card { background: var(--bg-surface); border: 1px solid #f3f4f6; border-radius: var(--radius-card); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
+    .card-title { font-size: 16px; font-weight: 600; color: var(--text-main); margin: 0 0 20px 0; display: flex; justify-content: space-between; align-items: center; }
+    
+    .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; margin-bottom: 24px; }
+    .stat-box { background: var(--bg-surface); border-radius: var(--radius-card); padding: 20px; box-shadow: var(--shadow-sm); border: 1px solid #f3f4f6; display: flex; flex-direction: column; transition: 0.2s; cursor: default; }
+    .stat-box:hover { box-shadow: var(--shadow-md); transform: translateY(-2px); }
+    .stat-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .stat-header span { font-size: 14px; font-weight: 500; color: var(--text-muted); }
+    
+    .stat-icon { width: 42px; height: 42px; border-radius: 12px; background: var(--primary-dark); color: #ffffff; display: flex; align-items: center; justify-content: center; font-size: 22px; transition: all 0.3s ease; }
+    .stat-box:hover .stat-icon { box-shadow: 0 4px 12px rgba(14, 165, 233, 0.3); transform: scale(1.05); }
+    
+    .stat-body h2 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; color: var(--text-main); line-height: 1; }
+    .stat-footer { font-size: 12px; display: flex; align-items: center; gap: 4px; font-weight: 500; }
+    .stat-footer.up { color: var(--primary); }
+    .stat-footer.down { color: var(--alert-red); }
+    .stat-footer.neutral { color: var(--text-muted); }
 
-        /* DASHBOARD BENTO GRID */
-        .bento-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; margin-bottom: 24px; }
-        .bento-card { background: var(--card-white); border-radius: 32px; padding: 32px; display: flex; flex-direction: column; position: relative; box-shadow: 0 4px 20px rgba(0,0,0,0.02); }
-        .bento-card.lime { background: var(--card-lime); }
-        .icon-box { width: 42px; height: 42px; border-radius: 12px; display: flex; justify-content: center; align-items: center; margin-bottom: 40px; font-size: 20px; }
-        .icon-box.pink { background: #FCE8E8; color: #F87171; }
-        .icon-box.mint { background: #E6F8F3; color: #34D399; }
-        .icon-box.dark-lime { background: #C0E326; color: #4D7C0F; } 
-        .bento-card h6 { font-size: 14px; font-weight: 500; color: var(--text-gray); margin: 0 0 8px 0; }
-        .bento-card.lime h6 { color: var(--text-dark); }
-        .bento-card h2 { font-size: 56px; font-weight: 400; margin: 0; letter-spacing: -2px; color: var(--text-dark); }
+    .table-controls { display: flex; flex-wrap: wrap; gap: 12px; justify-content: space-between; align-items: center; padding-bottom: 20px; border-bottom: 1px solid var(--border-color); margin-bottom: 20px; }
+    .flat-input { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; font-size: 14px; outline: none; transition: 0.2s; font-family: inherit; color: var(--text-main); background: var(--bg-body); }
+    .flat-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); background: #fff; }
+    
+    .flat-btn { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+    .flat-btn:hover { background: var(--bg-body); color: var(--text-main); }
+    .flat-btn.primary { background: var(--primary-strong); color: #fff; border-color: var(--primary-strong); }
+    .flat-btn.primary:hover { background: var(--primary-strong-hover); border-color: var(--primary-strong-hover); }
+    .flat-btn.danger { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
+    .flat-btn.danger:hover { background: #fee2e2; }
+    .flat-btn.danger-solid { background: #dc2626; color: #fff; border-color: #dc2626; }
+    .flat-btn.danger-solid:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+    .flat-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+    .row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
-        /* CARDS & TABLES */
-        .map-card { background: var(--card-white); border-radius: 32px; padding: 32px; box-shadow: 0 4px 20px rgba(0,0,0,0.02); }
-        .map-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; }
-        .map-header h3 { margin: 0; font-size: 18px; font-weight: 500; color: var(--text-dark); }
-        .map-legend span { font-size: 13px; color: var(--text-gray); margin-left: 16px; }
-        .map-container-inner { border-radius: 20px; overflow: hidden; height: 450px; border: 1px solid #E5E7EB; }
-        
-        .content-section { display: none; }
-        
-        /* REPORTS SECTION BENTO UI */
-        .reports-header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px; margin-bottom: 24px; }
-        .reports-header h3 { margin: 0; font-size: 20px; font-weight: 500; color: var(--text-dark); }
-        .reports-controls { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-        .search-pill { background: transparent; border: 1px solid #E5E7EB; border-radius: 30px; padding: 10px 20px; color: var(--text-dark); font-size: 14px; width: 250px; outline: none; transition: 0.2s; }
-        .search-pill:focus { border-color: var(--card-lime); }
-        .btn-print-pill { background: var(--text-dark); color: var(--card-lime); border: none; padding: 10px 20px; border-radius: 30px; font-size: 14px; font-weight: 500; text-decoration: none; display: flex; align-items: center; gap: 8px; transition: 0.2s; }
-        .btn-print-pill:hover { opacity: 0.8; }
-        
-        .bento-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
-        .bento-table th { text-align: left; padding: 16px 12px; color: var(--text-gray); font-size: 12px; text-transform: uppercase; letter-spacing: 1px; border-bottom: 1px solid rgba(107, 114, 128, 0.2); }
-        .bento-table td { padding: 16px 12px; color: var(--text-dark); font-size: 14px; border-bottom: 1px solid rgba(107, 114, 128, 0.1); vertical-align: middle; }
-        .bento-table tbody tr:hover { background: rgba(107, 114, 128, 0.05); }
+    /* Delete confirmation box */
+    .confirm-box { max-width: 440px; text-align: center; padding: 36px 32px 28px; }
+    .confirm-icon { width: 68px; height: 68px; border-radius: 50%; margin: 0 auto 18px; display: flex; align-items: center; justify-content: center; font-size: 30px; background: #fef2f2; color: #dc2626; box-shadow: 0 0 0 8px #fee2e2; }
+    .confirm-title { margin: 0 0 10px; font-size: 20px; font-weight: 700; color: var(--text-main); }
+    .confirm-text { margin: 0 0 14px; font-size: 14px; line-height: 1.6; color: var(--text-muted); }
+    .confirm-text strong { color: var(--text-main); }
+    .confirm-user { color: var(--text-muted); font-weight: 500; }
+    .confirm-note { margin: 0 0 22px; padding: 10px 14px; border-radius: 8px; background: var(--bg-body); font-size: 13px; font-weight: 500; color: var(--text-muted); }
+    .confirm-icon.info { background: var(--primary-light); color: var(--primary-strong); box-shadow: 0 0 0 8px #e0f2fe; }
+    .confirm-preview { text-align: left; background: var(--bg-body); border: 1px solid var(--border-color); border-left: 3px solid var(--primary); border-radius: 8px; padding: 12px 14px; margin: 0 0 22px; font-size: 14px; line-height: 1.55; color: var(--text-main); }
+    .confirm-preview #broadcastPreview { white-space: pre-wrap; word-break: break-word; max-height: 160px; overflow-y: auto; }
+    .confirm-preview span { display: block; margin-top: 8px; font-size: 12px; color: var(--text-muted); }
+    .confirm-actions { display: flex; gap: 12px; }
+    .confirm-actions .flat-btn { flex: 1; justify-content: center; padding: 12px 16px; }
 
-        /* PILLS & BUTTONS */
-        .status-pill { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 500; display: inline-block; }
-        .status-active, .status-cleaned { background: rgba(52, 211, 153, 0.1); color: #34D399; border: 1px solid rgba(52, 211, 153, 0.3); }
-        .status-pending { background: rgba(248, 113, 113, 0.1); color: #F87171; border: 1px solid rgba(248, 113, 113, 0.3); }
-        
-        .action-link { color: var(--card-lime); text-decoration: none; font-weight: 500; }
-        .action-link:hover { text-decoration: underline; }
-        
-        .btn-pill { background: var(--text-dark); color: var(--card-lime); border: none; padding: 12px 24px; border-radius: 30px; font-weight: 500; font-size: 14px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; transition: 0.2s; }
-        .btn-pill:hover { opacity: 0.9; transform: scale(0.98); color: var(--card-lime); }
-        
-        .btn-outline-pill { background: transparent; border: 1px solid #E5E7EB; color: var(--text-dark); padding: 8px 16px; border-radius: 30px; font-size: 13px; text-decoration: none; font-weight: 500; transition: 0.2s; display: inline-block; }
-        .btn-outline-pill:hover { border-color: var(--text-dark); }
-        .btn-outline-pill.danger { color: #F87171; border-color: #FCE8E8; background: #FCE8E8; }
-        .btn-outline-pill.danger:hover { opacity: 0.8; }
+    .flat-table { width: 100%; border-collapse: collapse; }
+    .flat-table th { text-align: left; padding: 16px; background-color: transparent; font-size: 13px; font-weight: 700; color: var(--text-main); text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border-color); }
+    .flat-table td { padding: 16px; border-bottom: 1px solid var(--border-color); font-size: 14px; vertical-align: middle; color: var(--text-main); transition: 0.2s; }
+    .flat-table tr:last-child td { border-bottom: none; }
+    .flat-table tr:hover td { background-color: #f9fafb; }
+    /* Report opened from a map pin: pulses three times, then stays softly highlighted until the next click */
+    .flat-table tr.row-highlight td { background-color: #e0f2fe; animation: rowPulse 1s ease 3; }
+    .flat-table tr.row-highlight td:first-child { box-shadow: inset 4px 0 0 var(--primary-strong); }
+    .flat-table tr.row-highlight:hover td { background-color: #e0f2fe; }
+    @keyframes rowPulse { 0%, 100% { background-color: #e0f2fe; } 50% { background-color: #bae6fd; } }
+    /* stop the zoom +/- from turning into a blue text selection when clicked quickly */
+    .leaflet-control-container { -webkit-user-select: none; user-select: none; }
 
-        /* FORMS */
-        .form-label { font-weight: 500; color: var(--text-dark); font-size: 14px; margin-bottom: 8px; display: block; }
-        .form-control { border-radius: 16px; border: 1px solid #E5E7EB; padding: 14px 16px; background-color: #F9FAFB; color: var(--text-dark); outline: none; width: 100%; transition: 0.2s; box-sizing: border-box; }
-        .form-control:focus { border-color: var(--text-dark); background-color: #fff; }
-        .section-title { font-size: 18px; font-weight: 500; color: var(--text-dark); margin: 30px 0 20px 0; padding-bottom: 10px; border-bottom: 1px solid #E5E7EB; }
+    .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
+    .status-badge.pending { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+    .status-badge.active { background: #e0f2fe; color: #075985; border: 1px solid #bae6fd; }
+    .status-badge.rejected { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    
+    .reporter-cell { display: flex; align-items: center; gap: 12px; }
+    .reporter-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary-light); color: var(--avatar-text-dark); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; }
+    
+    .photo-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; transition: 0.2s; margin-right: 6px; }
+    .photo-link.before { background: #fef2f2; color: var(--alert-red); border: 1px solid #fecaca; }
+    .photo-link.before:hover { background: #fee2e2; }
+    .photo-link.after { background: var(--primary-light); color: var(--avatar-text-dark); border: 1px solid #bae6fd; }
+    .photo-link.after:hover { background: #bae6fd; }
 
-        /* TABS */
-        .filter-group { display: inline-flex; background: transparent; border: 1px solid #E5E7EB; border-radius: 30px; overflow: hidden; margin-bottom: 24px; }
-        .filter-btn { background: transparent; border: none; padding: 10px 24px; color: var(--text-gray); font-size: 14px; font-weight: 500; cursor: pointer; transition: 0.2s; }
-        .filter-btn.active { background: var(--text-dark); color: var(--card-lime); }
+    .flat-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
+    .tab-btn { background: transparent; border: 1px solid transparent; font-size: 14px; font-weight: 500; color: var(--text-muted); padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; }
+    .tab-btn i { font-size: 18px; }
+    .tab-btn:hover { color: var(--text-main); background: var(--bg-body); }
+    .tab-btn.active { background: var(--bg-surface); color: var(--primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid var(--border-color); }
 
-        /* RESPONSIVE */
-        @media (max-width: 992px) {
-            .top-nav { display: flex; flex-direction: column; gap: 20px; align-items: flex-start; }
-            .notif-wrapper { align-self: flex-start; }
-            .bento-grid { grid-template-columns: 1fr; }
-            .nav-links { position: relative; left: 0; transform: none; flex-wrap: wrap; gap: 15px; justify-self: start; }
-            .header-section { flex-direction: column; align-items: flex-start; }
-            .header-section h1 { font-size: 32px; }
-            .bento-table { display: block; overflow-x: auto; white-space: nowrap; }
-        }
+    .form-group { margin-bottom: 24px; }
+    .form-label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: var(--text-main); }
+    .form-label i { color: var(--primary); font-size: 16px; }
+    .form-control { width: 100%; border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 14px; font-size: 14px; font-family: inherit; transition: 0.2s; box-sizing: border-box; background: var(--bg-body); }
+    .form-control:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); background: #fff; }
+    textarea.form-control { resize: vertical; min-height: 120px; line-height: 1.5; }
 
-        /* Reserves space for the scrollbar across all views to stop layout shifting */
-html {
-  scrollbar-gutter: stable;
-  overflow-y: scroll; /* Fallback for older browser compatibility */
-}
-    </style>
+    .alert-banner { background: #fffbeb; border: 1px solid #fde68a; border-left: 4px solid #f59e0b; color: #b45309; padding: 16px; border-radius: 8px; margin-bottom: 24px; display: flex; align-items: flex-start; gap: 12px; font-size: 14px; }
+    .alert-banner i { font-size: 20px; margin-top: 1px; color: #d97706; }
+    
+    .history-list { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+    .history-item { padding: 16px; border: 1px solid var(--border-color); border-radius: 8px; display: flex; flex-direction: column; gap: 8px; transition: 0.2s; background: var(--bg-surface); }
+    .history-item:hover { border-color: var(--primary-light); box-shadow: 0 2px 4px rgba(0,0,0,0.02); background: #fafafa; }
+    .history-header { display: flex; justify-content: space-between; align-items: center; font-size: 13px; }
+    .history-target { font-weight: 600; color: var(--text-main); display: flex; align-items: center; gap: 6px; }
+    .history-target i { color: var(--primary); font-size: 16px; }
+    .history-time { color: var(--text-muted); font-size: 12px; display: flex; align-items: center; gap: 4px; }
+    .history-msg { font-size: 14px; color: var(--text-muted); line-height: 1.5; }
+
+    .widget-list { list-style: none; padding: 0; margin: 0; }
+    .widget-list li:last-child { border-bottom: none !important; padding-bottom: 0 !important; margin-bottom: 0 !important; }
+
+    /* MODAL STYLES */
+    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
+    .modal-content { background: #fff; border-radius: var(--radius-card); width: 100%; max-width: 500px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); position: relative; max-height: 90vh; overflow-y: auto; }
+    .modal-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); transition: 0.2s; }
+    .modal-close:hover { color: #dc2626; }
+    .modal-title { margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+    .modal-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
+    .modal-table td { padding: 12px 8px; border-bottom: 1px solid var(--border-color); font-size: 14px; }
+    .modal-table td:first-child { font-weight: 600; color: var(--text-muted); width: 35%; }
+    .modal-table td:last-child { color: var(--text-main); font-weight: 500; }
+
+    /* ---------- Layout helpers (replace repeated inline grid styles) ---------- */
+    .dash-grid { display: grid; grid-template-columns: 2.2fr 1fr; gap: 24px; align-items: stretch; margin-bottom: 24px; }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; }
+    .settings-top { display: grid; grid-template-columns: 1fr 2fr; gap: 32px; margin-bottom: 32px; }
+    .align-start { align-items: start; }
+    .mb-24 { margin-bottom: 24px; }
+    .mb-32 { margin-bottom: 32px; }
+    .hotline-row { display: grid; grid-template-columns: 2fr 2fr auto; gap: 16px; margin-bottom: 12px; }
+
+    .workspace-text p { margin: 4px 0 0; font-size: 12px; font-weight: 500; color: var(--sidebar-header-text); }
+    .nav-text { display: inline; }
+    .desc-cell { max-width: 250px; overflow-wrap: anywhere; }
+    .empty-note { padding: 40px 24px; text-align: center; color: var(--text-muted); font-size: 14px; }
+
+    .notice { padding: 16px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px; }
+    .notice i { font-size: 20px; }
+    .notice.success { background: var(--primary-light); border: 1px solid var(--primary); color: #075985; }
+    .notice.error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
+    .notice.warn { background: #fffbeb; border: 1px solid #fde68a; color: #b45309; }
+
+    /* Resident tabs are filtered by CSS so rows never flash before the script runs */
+    #residentsTableBody[data-tab="Pending"] .resident-row:not([data-status="Pending"]),
+    #residentsTableBody[data-tab="Approved"] .resident-row:not([data-status="Approved"]),
+    #residentsTableBody[data-tab="Rejected"] .resident-row:not([data-status="Rejected"]) { display: none; }
+
+    .form-control:disabled { cursor: not-allowed; opacity: 0.85; }
+
+    /* ---------- Map pins: same colours as the legend ---------- */
+    .map-pin-wrap { background: transparent; border: 0; }
+    .map-pin { display: block; overflow: visible; filter: drop-shadow(0 3px 3px rgba(0, 0, 0, 0.35)); transition: transform 0.15s; transform-origin: 50% 100%; }
+    .map-pin path { stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
+    .map-pin circle { fill: #fff; }
+    .map-pin.pending path { fill: var(--alert-red); }
+    .map-pin.cleaned path { fill: var(--primary); }
+    .leaflet-marker-icon:hover .map-pin { transform: scale(1.12); }
+    .legend-pin { display: block; }
+    .legend-pin path { stroke: #fff; stroke-width: 2; stroke-linejoin: round; }
+    .legend-pin circle { fill: #fff; }
+    .legend-pin.pending path { fill: var(--alert-red); }
+    .legend-pin.cleaned path { fill: var(--primary); }
+
+    /* ---------- Reports Overview (line chart) ---------- */
+    .chart-card { padding: 0; overflow: hidden; margin-bottom: 0; --chart-reported: var(--primary-strong); --chart-resolved: #10B981; }
+    .chart-head { padding: 24px 24px 8px; margin: 0; flex-wrap: wrap; gap: 16px; }
+    .chart-title { font-size: 16px; color: var(--text-main); }
+    .chart-sub { font-size: 13px; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+    .chart-controls { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+    .chart-summary { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-muted); }
+    .chart-chip { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-chip strong { font-size: 20px; font-weight: 700; color: var(--text-main); }
+    .chart-key { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .chart-key.reported { background: var(--chart-reported); }
+    .chart-key.resolved { background: var(--chart-resolved); }
+    .chart-delta { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+    .chart-delta.up { color: var(--chart-reported); }
+    .chart-delta.resolved.up { color: #059669; }
+    .chart-when { color: var(--text-muted); font-weight: 500; }
+    .chart-toggle { display: inline-flex; background: var(--bg-body); border-radius: 8px; padding: 3px; gap: 2px; }
+    .chart-toggle-btn { border: 0; background: transparent; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--text-muted); padding: 7px 16px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; }
+    .chart-toggle-btn:hover { color: var(--text-main); }
+    .chart-toggle-btn.active { background: var(--bg-surface); color: var(--primary-strong); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+    .chart-body { position: relative; padding: 8px 20px 20px; }
+    .chart-note { padding: 0 24px 18px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+    .chart-svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart-svg text { font-family: inherit; font-size: 11px; fill: var(--text-muted); }
+    .chart-svg .chart-grid { stroke: #eef0f3; stroke-width: 1; }
+    .chart-svg .chart-axis { stroke: #d9dde3; stroke-width: 1; }
+    .chart-svg .chart-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; animation: chartDraw 0.9s ease both; }
+    .chart-svg .chart-line.reported { stroke: var(--chart-reported); }
+    .chart-svg .chart-line.resolved { stroke: var(--chart-resolved); }
+    .chart-svg .chart-area { animation: chartFade 0.9s ease both; }
+    .chart-svg .chart-dot { fill: #fff; stroke-width: 2; transition: r 0.15s ease; pointer-events: none; }
+    .chart-svg .chart-dot.reported { stroke: var(--chart-reported); }
+    .chart-svg .chart-dot.resolved { stroke: var(--chart-resolved); }
+    .chart-svg .chart-dot.reported.latest { fill: var(--chart-reported); }
+    .chart-svg .chart-dot.resolved.latest { fill: var(--chart-resolved); }
+    .chart-svg .chart-dot.on { r: 6; }
+    .chart-svg .chart-hit { fill: transparent; outline: none; cursor: crosshair; }
+    .chart-svg .chart-hit:focus { fill: rgba(2, 132, 199, 0.07); }
+    .chart-svg .chart-guide { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+    .chart-svg .chart-guide.show { opacity: 0.8; }
+    .chart-svg .chart-empty { font-size: 14px; font-weight: 500; text-anchor: middle; }
+    .chart-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--text-main); color: #fff; border-radius: 8px; padding: 9px 12px; font-size: 12px; line-height: 1.5; box-shadow: 0 6px 16px rgba(15, 23, 42, 0.25); transform: translate(-50%, -100%); white-space: nowrap; }
+    .chart-tip .tip-date { color: #cbd5e1; margin-bottom: 4px; }
+    .chart-tip .tip-row { display: flex; align-items: center; gap: 6px; }
+    .chart-tip .tip-row strong { margin-left: auto; padding-left: 14px; font-size: 14px; }
+    @keyframes chartDraw { from { stroke-dashoffset: var(--len, 1000); } to { stroke-dashoffset: 0; } }
+    @keyframes chartFade { from { opacity: 0; } to { opacity: 1; } }
+
+    /* ---------- Keyboard focus + reduced motion ---------- */
+    :focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 2px; }
+    .nav-link:focus-visible, .user-footer a:focus-visible, .notification-btn:focus-visible { outline-color: #ffffff; }
+
+    @media (prefers-reduced-motion: reduce) {
+        * { transition: none !important; animation: none !important; }
+        .stat-box:hover, .welcome-btn:hover { transform: none; }
+    }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 1200px) {
+        .stats-grid { grid-template-columns: repeat(2, 1fr); }
+        .dash-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 992px) {
+        .grid-2, .grid-3, .settings-top { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 860px) {
+        /* Sidebar becomes an icon rail; labels stay available to screen readers */
+        .sidebar { width: 72px; }
+        .main-wrapper { margin-left: 72px; }
+        .workspace-header { padding: 20px 8px 16px; }
+        .workspace-logo { width: 44px; height: 44px; }
+        .workspace-text, .menu-label, .user-text { display: none; }
+        .sidebar-menu { padding: 10px 8px; }
+        .nav-link { justify-content: center; padding: 12px 0; border-left-width: 0; }
+        .nav-link.active { border-left-width: 0; box-shadow: inset 3px 0 0 var(--active-tab-blue); }
+        .nav-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+        .user-footer { flex-direction: column; gap: 12px; padding: 12px 8px; }
+        .topbar { padding: 0 16px; }
+        .content-area { padding: 16px; }
+        .welcome-banner { flex-direction: column; align-items: flex-start; gap: 16px; padding: 24px; }
+        .notification-dropdown { right: 16px; width: calc(100vw - 104px); max-width: 320px; }
+    }
+    @media (max-width: 560px) {
+        .stats-grid { grid-template-columns: 1fr; }
+        .live-datetime { display: none; }
+        .hotline-row { grid-template-columns: 1fr; }
+        .hotline-row .remove-hotline { padding: 10px 16px !important; justify-content: center; }
+        .modal-content { padding: 24px 20px; }
+    }
+  </style>
 </head>
-
 <body>
-<div class="main-wrapper">
 
-    <!-- TOP NAVIGATION -->
-    <div class="top-nav">
-        <?php $sidebar_bname = !empty($info['barangay_name']) ? 'Brgy. ' . $info['barangay_name'] : 'Barangay Tanza'; ?>
-        <a href="javascript:void(0)" onclick="switchTab('dashboard')" class="nav-brand">
-            <div class="brand-icon">◻</div>
-            <?php echo htmlspecialchars($sidebar_bname); ?>
-        </a>
-        
-        <div class="nav-links">
-            <a id="nav-dashboard" onclick="switchTab('dashboard')">Dashboard</a>
-            <a id="nav-reports" onclick="switchTab('reports')">Reports</a>
-            <a id="nav-residents" onclick="switchTab('residents')">Residents</a>
-            <a id="nav-alert" onclick="switchTab('alert')">Alerts</a>
-            <a id="nav-settings" onclick="switchTab('settings')">Settings</a>
-            <a href="logout.php" onclick="return confirm('Log out?');">Logout</a>
+<div class="app-container">
+
+    <aside class="sidebar">
+        <div class="workspace-header">
+            <div class="workspace-brand">
+                <img src="<?php echo h($logo_src); ?>" alt="<?php echo h($info['barangay_name'] ?? 'Barangay'); ?> logo" class="workspace-logo" onerror="this.onerror=null;this.src='tanzalogo.jpg'">
+                <div class="workspace-text">
+                    <h2>Coastal and Land Watch</h2>
+                    <p><?php echo h($info['barangay_name'] ?? ''); ?></p>
+                </div>
+            </div>
         </div>
 
-        <div class="notif-wrapper">
-            <?php
-            $last_seen_id = isset($_COOKIE['last_seen_notif_id']) ? intval($_COOKIE['last_seen_notif_id']) : 0;
-            $new_reports_check = $conn->query("SELECT COUNT(*) as c FROM waste_reports WHERE status = 'Pending' AND report_id > $last_seen_id")->fetch_assoc();
-            $new_count = $new_reports_check['c'] ? $new_reports_check['c'] : 0;
+        <div class="sidebar-menu">
+            <div class="menu-label">Overview</div>
+            <a href="?view=dashboard" class="nav-link <?php echo $view == 'dashboard' ? 'active' : ''; ?>">
+                <i class="ti ti-layout-grid"></i> <span class="nav-text">Dashboard</span>
+            </a>
+            <a href="?view=reports" class="nav-link <?php echo $view == 'reports' ? 'active' : ''; ?>">
+                <i class="ti ti-file-report"></i> <span class="nav-text">Waste Reports</span>
+            </a>
+            
+            <div class="menu-label" style="margin-top: 16px;">Community</div>
+            <a href="?view=residents" class="nav-link <?php echo $view == 'residents' ? 'active' : ''; ?>">
+                <i class="ti ti-users"></i> <span class="nav-text">Residents</span>
+            </a>
+            <a href="?view=alert" class="nav-link <?php echo $view == 'alert' ? 'active' : ''; ?>">
+                <i class="ti ti-speakerphone"></i> <span class="nav-text">Basura-Alert</span>
+            </a>
+            
+            <div class="menu-label" style="margin-top: 16px;">Configuration</div>
+            <a href="?view=settings" class="nav-link <?php echo $view == 'settings' ? 'active' : ''; ?>">
+                <i class="ti ti-settings"></i> <span class="nav-text">Settings</span>
+            </a>
+        </div>
 
-            $absolute_max_check = $conn->query("SELECT MAX(report_id) as max_id FROM waste_reports WHERE status = 'Pending'")->fetch_assoc();
-            $max_id_to_save = $absolute_max_check['max_id'] ? $absolute_max_check['max_id'] : 0;
+        <div class="user-footer">
+            <?php 
+                $sidebar_display_name = !empty($info['secretary_name']) ? $info['secretary_name'] : $admin_name;
+                $sidebar_initial = strtoupper(substr($sidebar_display_name, 0, 1));
+                $sec_pic_path = !empty($info['secretary_profile_pic']) ? 'uploads/profiles/' . $info['secretary_profile_pic'] : '';
+                $has_sec_pic = (!empty($sec_pic_path) && file_exists($sec_pic_path));
             ?>
+            <div class="user-info">
+                <div class="user-avatar">
+                    <?php if ($has_sec_pic): ?>
+                        <img src="<?php echo htmlspecialchars($sec_pic_path); ?>" alt="Profile" style="width: 100%; height: 100%; object-fit: cover;">
+                    <?php else: ?>
+                        <?php echo $sidebar_initial; ?>
+                    <?php endif; ?>
+                </div>
+                <div class="user-text">
+                    <h4><?php echo htmlspecialchars($sidebar_display_name); ?></h4>
+                    <p>Administrator</p>
+                </div>
+            </div>
+            <a href="logout.php" onclick="return confirm('Logout of system?');" title="Logout" aria-label="Logout"><i class="ti ti-logout"></i></a>
+        </div>
+    </aside>
+
+    <div class="main-wrapper">
+        <header class="topbar">
+            <div class="topbar-left">
+                <i class="ti ti-layout-dashboard"></i>
+                <?php echo h($view_titles[$view]); ?>
+            </div>
+            <div class="topbar-right">
+                <div class="live-datetime" id="liveDateTime">
+                    <i class="ti ti-clock"></i> Loading...
+                </div>
+                <div class="topbar-icons">
+                    <button type="button" class="notification-btn" id="notifBtn" onclick="toggleNotifications()" aria-label="Notifications" aria-haspopup="true" aria-expanded="false">
+                        <i class="ti ti-bell"></i>
+                        <span class="notification-badge-count" id="notifCount">0</span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="notification-dropdown" id="notifDropdown">
+                <div class="notif-header">
+                    <h3>New Reports</h3>
+                    <span style="font-size: 11px; color: var(--text-muted);" id="notifHeaderText">0 unread</span>
+                </div>
+                <div class="notif-list" id="notifList">
+                    <div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">No new notifications</div>
+                </div>
+                <div class="notif-footer">
+                    <a href="?view=reports">View All Reports</a>
+                </div>
+            </div>
+        </header>
+
+        <main class="content-area">
             
-            <?php if ($new_count > 0): ?>
-                <button id="adminNotifBtn" class="btn-notif" data-maxid="<?php echo $max_id_to_save; ?>">
-                    ◧ <?php echo $new_count; ?> new <?php echo ($new_count == 1) ? 'report' : 'reports'; ?>
+            <?php if ($view == 'dashboard'): ?>
+            <div class="welcome-banner">
+                <div class="welcome-text">
+                    <!-- DINITO ANG PAGBABAGO: Kinukuha ang secretary name o admin name -->
+                    <h1>Welcome back, <?php echo htmlspecialchars(!empty($info['secretary_name']) ? $info['secretary_name'] : $admin_name); ?>!</h1>
+                    <p>Here's what's happening in your barangay today.</p>
+                </div>
+                <button class="welcome-btn" onclick="window.location.href='?view=reports'">
+                    View Reports <i class="ti ti-arrow-right"></i>
                 </button>
-            <?php else: ?>
-                <button id="adminNotifBtn" class="btn-notif" data-maxid="<?php echo $max_id_to_save; ?>" style="background: #F9FAFB; color: var(--text-dark); border: 1px solid #E5E7EB;">
-                    ◧ Notifications
-                </button>
-            <?php endif; ?>
-            
-            <!-- NOTIFICATION DROPDOWN -->
-            <div id="adminNotifBox" style="display: none; position: absolute; top: 50px; right: 0; min-width: 350px; z-index: 1050; background: var(--card-white); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); border: 1px solid #E5E7EB; overflow: hidden;">
-                <div style="background: var(--text-dark); color: #fff; padding: 15px; font-weight: 600;">Needs Action</div>
+            </div>
+
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-header">
+                        <span>Pending Reports</span> 
+                        <div class="stat-icon"><i class="ti ti-clipboard-text"></i></div>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo $stat_pending; ?></h2>
+                        <div class="stat-footer neutral"><i class="ti ti-clock"></i> <?php echo $stat_pending_week; ?> new in the last 7 days</div>
+                    </div>
+                </div>
+
+                <div class="stat-box">
+                    <div class="stat-header">
+                        <span>Cleaned Areas</span> 
+                        <div class="stat-icon"><i class="ti ti-check"></i></div>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo $stat_cleaned; ?></h2>
+                        <div class="stat-footer up"><i class="ti ti-check"></i> <?php echo $stat_cleaned_pct; ?>% of all reports</div>
+                    </div>
+                </div>
+
+                <div class="stat-box">
+                    <div class="stat-header">
+                        <span>Active Residents</span> 
+                        <div class="stat-icon"><i class="ti ti-users"></i></div>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo $stat_active; ?></h2>
+                        <div class="stat-footer neutral"><i class="ti ti-clock"></i> <?php echo $stat_awaiting; ?> awaiting approval</div>
+                    </div>
+                </div>
+
+                <div class="stat-box">
+                    <div class="stat-header">
+                        <span>Total Logs</span> 
+                        <div class="stat-icon"><i class="ti ti-file-analytics"></i></div>
+                    </div>
+                    <div class="stat-body">
+                        <h2><?php echo $stat_total; ?></h2>
+                        <div class="stat-footer neutral"><i class="ti ti-calendar"></i> <?php echo $stat_week; ?> in the last 7 days</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="dash-grid">
                 
-                <div style="max-height: 350px; overflow-y: auto;">
-                    <?php
-                    $recent_reports = $conn->query("SELECT w.*, u.username, u.full_name FROM waste_reports w JOIN users u ON w.resident_id = u.user_id WHERE w.status = 'Pending' ORDER BY w.created_at DESC LIMIT 5");
-                    
-                    if ($recent_reports && $recent_reports->num_rows > 0) {
-                        while($notif = $recent_reports->fetch_assoc()) {
-                            $reporter = !empty($notif['full_name']) ? $notif['full_name'] : $notif['username'];
-                            $desc = addslashes(htmlspecialchars($notif['description']));
-                            $img = addslashes(htmlspecialchars($notif['before_photo_path']));
-                            $date = date("M d, Y - h:i A", strtotime($notif['created_at']));
-                            
-                            echo "<div onclick='openNotifModal(\"$img\", \"$reporter\", \"$date\", \"$desc\")' onmouseover='this.style.background=\"#F9FAFB\"' onmouseout='this.style.background=\"transparent\"' style='padding: 15px; border-bottom: 1px solid rgba(107,114,128,0.2); cursor: pointer; transition: 0.2s;'>";
-                            echo "<strong style='color: #F87171; display: block; margin-bottom: 4px;'>🚨 New Report from " . htmlspecialchars($reporter) . "</strong>";
-                            echo "<span style='font-size: 13px; color: var(--text-gray);'>\"" . htmlspecialchars($notif['description']) . "\"</span>";
-                            echo "</div>";
-                        }
-                    } else {
-                        echo "<div style='padding: 20px; text-align: center; color: var(--text-gray);'>No pending reports.</div>";
-                    }
-                    ?>
-                </div>
-            </div>
-        </div>
-    </div>
-    
-    <!-- =================================================================== -->
-    <!-- VIEW 1: DASHBOARD                                                   -->
-    <!-- =================================================================== -->
-    <div id="section-dashboard" class="content-section">
-        <div class="header-section">
-            <div>
-                <h1>Keep the coastline clean, together.</h1>
-                <?php 
-                $sidebar_municipal = !empty($info['municipal']) ? $info['municipal'] : 'Estancia';
-                $sidebar_city = !empty($info['city']) ? $info['city'] : 'Iloilo';
-                ?>
-                <p><?php echo htmlspecialchars($sidebar_municipal . ', ' . $sidebar_city); ?> — live report and cleanup tracking</p>
-            </div>
-        </div>
-
-        <div class="bento-grid">
-            <div class="bento-card">
-                <div class="icon-box pink">📄</div>
-                <h6>Pending reports</h6>
-                <?php
-                $pending = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Pending'")->fetch_assoc();
-                echo "<h2>" . $pending['count'] . "</h2>";
-                ?>
-            </div>
-            
-            <div class="bento-card">
-                <div class="icon-box mint">✓</div>
-                <h6>Cleaned areas</h6>
-                <?php
-                $cleaned = $conn->query("SELECT COUNT(*) as count FROM waste_reports WHERE status='Cleaned'")->fetch_assoc();
-                echo "<h2>" . $cleaned['count'] . "</h2>";
-                ?>
-            </div>
-            
-            <div class="bento-card lime">
-                <div class="icon-box dark-lime">👤</div>
-                <h6>Active residents</h6>
-                <?php
-                $users = $conn->query("SELECT COUNT(*) as count FROM users WHERE role='Resident'")->fetch_assoc();
-                echo "<h2>" . $users['count'] . "</h2>";
-                ?>
-            </div>
-        </div>
-
-        <div class="map-card">
-            <div class="map-header">
-                <h3>Barangay GIS master map</h3>
-                <div class="map-legend">
-                    <span>🔴 Pending</span>
-                    <span>🟢 Cleaned</span>
-                </div>
-            </div>
-            <div class="map-container-inner">
-                <div id="masterMap" style="height: 100%; width: 100%; z-index: 1;"></div>
-            </div>
-        </div>
-    </div>
-
-    <!-- =================================================================== -->
-    <!-- VIEW 2: REPORTS                                                     -->
-    <!-- =================================================================== -->
-    <div id="section-reports" class="content-section">
-        <div class="header-section">
-            <div>
-                <h1>Official Waste Reports and Cleanup Logs.</h1>
-                <p>Review submitted issues, update statuses, and generate official printable records.</p>
-            </div>
-        </div>
-
-        <div class="map-card">
-            <div class="reports-header" style="display: flex; flex-direction: column; gap: 20px; margin-bottom: 24px; align-items: stretch;">
-                <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px;">
-                    <h3 style="margin: 0; font-size: 20px; font-weight: 600; color: var(--text-dark);">Recent Waste Reports</h3>
-                    
-                    <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
-                        <div style="display: flex; align-items: center; gap: 8px; background: #F9FAFB; border: 1px solid #E5E7EB; border-radius: 30px; padding: 6px 16px;">
-                            <span style="font-size: 13px; color: var(--text-gray); font-weight: 500;">Print Range:</span>
-                            <input type="date" id="printFromDate" style="border: none; background: transparent; color: var(--text-dark); font-size: 13px; outline: none; cursor: pointer;">
-                            <span style="color: var(--text-gray); font-size: 13px;">to</span>
-                            <input type="date" id="printToDate" style="border: none; background: transparent; color: var(--text-dark); font-size: 13px; outline: none; cursor: pointer;">
+                <div class="flat-card" style="margin-bottom: 0; display: flex; flex-direction: column; padding: 0; overflow: hidden;">
+                    <div class="card-title" style="padding: 24px 24px 16px 24px; margin: 0;">
+                        <div>
+                            <div style="font-size: 16px; color: var(--text-main);">Barangay Map Activity</div>
+                            <div style="font-size: 13px; color: var(--text-muted); font-weight: 400; margin-top: 4px;">Real-time geographical tracking</div>
                         </div>
-
-                        <button onclick="generatePrintReport()" class="btn-print-pill" style="cursor: pointer; margin: 0; padding: 10px 24px;">
-                            🖨️ Print
-                        </button>
+                        <div style="display: flex; gap: 16px; font-size: 13px; font-weight: 500;">
+                            <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin pending" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Pending</span>
+                            <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin cleaned" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Cleaned</span>
+                        </div>
                     </div>
+                    <div id="masterMap" style="flex: 1; min-height: 400px; width: 100%; z-index: 1;"></div>
                 </div>
 
-                <div class="reports-controls" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 16px; width: 100%;">
-                    <input type="text" id="searchInput" class="search-pill" placeholder="🔍 Search Name or Description" style="flex: 1; max-width: 350px;">
+                <div style="display: flex; flex-direction: column; gap: 24px;">
                     
-                    <div class="filter-group" style="margin-bottom: 0;">
-                        <button id="filter-All" class="filter-btn active" onclick="filterTable('All')">All</button>
-                        <button id="filter-Pending" class="filter-btn" onclick="filterTable('Pending')">Pending</button>
-                        <button id="filter-Cleaned" class="filter-btn" onclick="filterTable('Cleaned')">Cleaned</button>
-                    </div>
-                </div>
-            </div>
-
-            <div style="overflow-x: auto;">
-                <table class="bento-table">
-                    <thead>
-                        <tr>
-                            <th>Reporter</th>
-                            <th>Date</th>
-                            <th>Description</th>
-                            <th>Location</th>
-                            <th>Photos</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody id="reportsTableBody">
-                        <?php
-                        $reports_query = $conn->query("SELECT waste_reports.*, users.full_name FROM waste_reports JOIN users ON waste_reports.resident_id = users.user_id ORDER BY waste_reports.created_at DESC");
-                        
-                        if($reports_query && $reports_query->num_rows > 0) {
-                            while($row = $reports_query->fetch_assoc()) {
-                                echo "<tr class='report-row' data-status='" . $row['status'] . "'>";
-                                echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                                echo "<td>
-                                        <span style='color: var(--text-gray); display: block; font-weight: 500;'>" . date("M d, Y", strtotime($row['created_at'])) . "</span>
-                                        <span style='color: var(--text-gray); font-size: 12px; opacity: 0.7;'>" . date("h:i A", strtotime($row['created_at'])) . "</span>
-                                      </td>";
-                                echo "<td>" . htmlspecialchars($row['description']) . "</td>";
-                                
-                                $lat = isset($row['latitude']) ? $row['latitude'] : '0';
-                                $lng = isset($row['longitude']) ? $row['longitude'] : '0';
-                                echo "<td><a href='https://www.google.com/maps?q=" . $lat . "," . $lng . "' target='_blank' style='color: #3B82F6; text-decoration:none; font-weight:600;'>Map 📍</a></td>";
-                                
-                                echo "<td><a href='uploads/reports/" . $row['before_photo_path'] . "' target='_blank' style='background: #F3F4F6; color: var(--text-dark); border: 1px solid #E5E7EB; padding: 4px 12px; border-radius: 20px; font-size: 11px; text-decoration: none; display: inline-block; margin-bottom: 6px; font-weight: 600;'>Before</a> ";
-                                if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
-                                    echo "<br><a href='uploads/reports/" . $row['after_photo_path'] . "' target='_blank' style='background: var(--card-lime); color: var(--text-dark); padding: 4px 12px; border-radius: 20px; font-size: 11px; text-decoration: none; display: inline-block; font-weight: 600; box-shadow: 0 2px 5px rgba(0,0,0,0.05);'>After</a>";
+                    <div class="flat-card" style="margin-bottom: 0; flex: 1; display: flex; flex-direction: column; padding: 24px;">
+                        <div class="card-title" style="margin-bottom: 12px; padding: 0;">
+                            <div>Pending Approvals</div>
+                            <a href="?view=residents" style="font-size: 13px; color: var(--primary); text-decoration: none; font-weight: 500;">View All</a>
+                        </div>
+                        <ul class="widget-list">
+                            <?php
+                            $pending_users = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status='Pending' ORDER BY user_id DESC LIMIT 3");
+                            if($pending_users && $pending_users->num_rows > 0) {
+                                while($u = $pending_users->fetch_assoc()) {
+                                    $initial = strtoupper(substr($u['full_name'], 0, 1));
+                                    echo "<li style='display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-color);'>";
+                                    echo "  <div style='display: flex; align-items: center; gap: 12px;'>";
+                                    echo "      <div style='width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light); color: var(--avatar-text-dark); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 14px;'>{$initial}</div>";
+                                    echo "      <div><h4 style='margin: 0; font-size: 14px; font-weight: 600; color: var(--text-main);'>" . htmlspecialchars($u['full_name']) . "</h4><p style='margin: 0; font-size: 12px; color: var(--text-muted);'>" . htmlspecialchars($u['phone_number']) . "</p></div>";
+                                    echo "  </div>";
+                                    echo "  <a href='admin_dashboard.php?view=residents&view_user_id=" . $u['user_id'] . "' class='flat-btn primary' style='padding: 6px 12px; font-size: 12px;'>View</a>";
+                                    echo "</li>";
                                 }
-                                echo "</td>";
-                                
-                                if ($row['status'] == 'Pending') {
-                                    echo "<td><span class='status-pill status-pending'>Pending</span></td>";
-                                } else {
-                                    echo "<td><span class='status-pill status-cleaned'>Cleaned</span></td>";
-                                }
-                                
-                                echo "<td>";
-                                if ($row['status'] == 'Pending') {
-                                    echo "<a href='resolve_report.php?id=" . $row['report_id'] . "' style='background: var(--text-dark); color: #fff; padding: 8px 16px; border-radius: 20px; font-size: 12px; text-decoration: none; font-weight: 600; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.1);'>Resolve</a>";
-                                } else {
-                                    echo "<span style='color: var(--text-gray); font-weight: 500; font-size: 13px;'>Resolved</span>";
-                                }
-                                echo "</td>";
-                                echo "</tr>";
+                            } else {
+                                echo "<li style='padding: 20px 0; text-align: center; color: var(--text-muted); font-size: 13px;'>No pending approvals.</li>";
                             }
-                        } else {
-                            echo "<tr id='no-data-row'><td colspan='7' style='text-align:center; padding: 30px; color: var(--text-gray); font-weight: 500;'>No waste reports found.</td></tr>";
-                        }
-                        ?>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-    </div>
+                            ?>
+                        </ul>
+                    </div>
 
-    <!-- =================================================================== -->
-    <!-- VIEW 3: RESIDENTS MANAGEMENT                                        -->
-    <!-- =================================================================== -->
-    <div id="section-residents" class="content-section">
-        <div class="header-section">
-            <div>
-                <h1>Resident Management</h1>
-                <p>Review uploaded IDs and manage community app access</p>
-            </div>
-        </div>
-
-        <div class="map-card">
-            <?php if (isset($_GET['status']) && $_GET['status'] === 'deleted'): ?>
-                <div style="background: #D1FAE5; color: #065F46; padding: 16px; border-radius: 16px; margin-bottom: 20px; border: 1px solid #A7F3D0; font-weight: 500;">
-                    Resident account successfully deleted!
-                </div>
-            <?php endif; ?>
-
-            <div class="reports-header">
-                <h3>Community Residents</h3>
-                <div class="reports-controls">
-                    <div class="filter-group" style="margin-bottom: 0;">
-                        <button id="tab-pending" class="filter-btn active" onclick="switchResTab('pending')">Pending Approvals</button>
-                        <button id="tab-active" class="filter-btn" onclick="switchResTab('active')">Active Residents</button>
+                    <div class="flat-card" style="margin-bottom: 0; flex: 1; display: flex; flex-direction: column; padding: 24px;">
+                        <div class="card-title" style="margin-bottom: 12px; padding: 0;">
+                            <div>New Reports</div>
+                            <a href="?view=reports" style="font-size: 13px; color: var(--primary); text-decoration: none; font-weight: 500;">View All</a>
+                        </div>
+                        <ul class="widget-list">
+                            <?php
+                            $pending_reps = $conn->query("SELECT w.*, COALESCE(u.full_name, 'Deleted user') AS full_name FROM waste_reports w LEFT JOIN users u ON w.resident_id = u.user_id WHERE w.status='Pending' ORDER BY w.created_at DESC LIMIT 3");
+                            if($pending_reps && $pending_reps->num_rows > 0) {
+                                while($r = $pending_reps->fetch_assoc()) {
+                                    $time_ago = date("M d, g:i A", strtotime($r['created_at']));
+                                    echo "<li style='display: flex; justify-content: space-between; align-items: center; padding: 12px 0; border-bottom: 1px solid var(--border-color);'>";
+                                    echo "  <div style='display: flex; align-items: center; gap: 12px;'>";
+                                    echo "      <img src='uploads/reports/" . htmlspecialchars($r['before_photo_path']) . "' style='width: 40px; height: 40px; border-radius: 8px; object-fit: cover;' onerror=\"this.onerror=null;this.src='https://placehold.co/40x40/e5e7eb/a1a1aa?text=NA'\">";
+                                    echo "      <div><h4 style='margin: 0; font-size: 14px; font-weight: 600; color: var(--text-main);'>" . htmlspecialchars($r['full_name']) . "</h4><p style='margin: 0; font-size: 12px; color: var(--text-muted);'>{$time_ago}</p></div>";
+                                    echo "  </div>";
+                                    echo "  <a href='resolve_report.php?id=" . $r['report_id'] . "' class='flat-btn' style='padding: 6px 10px; border-radius: 6px;'><i class='ti ti-arrow-right'></i></a>";
+                                    echo "</li>";
+                                }
+                            } else {
+                                echo "<li style='padding: 20px 0; text-align: center; color: var(--text-muted); font-size: 13px;'>No new reports.</li>";
+                            }
+                            ?>
+                        </ul>
                     </div>
                 </div>
             </div>
 
-            <!-- SUB TAB: Pending Approvals -->
-            <div id="sub-section-pending" style="display: block;">
+            <div class="flat-card chart-card" id="reportsChartCard">
+                <div class="card-title chart-head">
+                    <div>
+                        <div class="chart-title">Reports Overview</div>
+                        <div class="chart-sub" id="chartSub">Reports submitted and resolved per week</div>
+                    </div>
+                    <div class="chart-controls">
+                        <div class="chart-summary" id="chartSummary" aria-live="polite"></div>
+                        <div class="chart-toggle" role="group" aria-label="Chart period">
+                            <button type="button" class="chart-toggle-btn active" data-period="weekly" aria-pressed="true">Weekly</button>
+                            <button type="button" class="chart-toggle-btn" data-period="monthly" aria-pressed="false">Monthly</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-body" id="reportsChart">
+                    <div class="chart-tip" id="chartTip" hidden></div>
+    
+                <?php if (!empty($chart_data['estimated'])): ?>
+                <div class="chart-note"><i class="ti ti-info-circle"></i> Resolved reports are counted in the period they were submitted until cleaned dates are recorded.</div>
+                <?php endif; ?>
+            </div>
+            </div>
+
+            <?php elseif ($view == 'reports'): ?>
+            <?php
+            // ?highlight=ID comes from clicking a Cleaned pin on the dashboard map
+            $highlight_id = isset($_GET['highlight']) ? (int)$_GET['highlight'] : 0;
+            if ($highlight_id > 0) {
+                $hl_stmt = $conn->prepare("SELECT COUNT(*) FROM waste_reports WHERE report_id = ?");
+                $hl_stmt->bind_param("i", $highlight_id);
+                $hl_stmt->execute();
+                $hl_stmt->bind_result($hl_count);
+                $hl_stmt->fetch();
+                $hl_stmt->close();
+                if ((int)$hl_count === 0) { $highlight_id = -1; }   // asked for a report that no longer exists
+            }
+            ?>
+            <?php if ($highlight_id === -1): ?>
+                <div class="notice warn" role="status"><i class="ti ti-info-circle"></i> That report no longer exists.</div>
+            <?php endif; ?>
+            <?php if (isset($_GET['resolved'])): ?>
+                <div class="notice success" role="status"><i class="ti ti-circle-check"></i> Report #<?php echo (int)$_GET['resolved']; ?> was marked as Cleaned.</div>
+            <?php endif; ?>
+            <div class="flat-card" style="padding: 0; overflow: hidden;">
+                <div class="table-controls" style="padding: 24px; margin: 0;">
+                    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+                        <input type="text" id="searchInput" class="flat-input" aria-label="Search reports" placeholder="Search reporter or description..." style="width: 280px;">
+                        
+                        <div style="position: relative;">
+                            <select id="statusFilter" class="flat-input" aria-label="Filter by status" onchange="filterTableDropdown()" style="padding-right: 32px; appearance: none; cursor: pointer;">
+                                <option value="All">All Status</option>
+                                <option value="Pending">Pending</option>
+                                <option value="Cleaned">Cleaned</option>
+                            </select>
+                            <i class="ti ti-chevron-down" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);"></i>
+                        </div>
+                        
+                        <div style="display: flex; align-items: center; gap: 8px; margin-left: 8px;">
+                            <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;">From:</span>
+                            <input type="date" id="startDate" class="flat-input" onchange="filterTableDropdown()" title="Start Date">
+                            <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;">To:</span>
+                            <input type="date" id="endDate" class="flat-input" onchange="filterTableDropdown()" title="End Date">
+                        </div>
+                    </div>
+                    <button class="flat-btn primary" onclick="generatePrintReport()"><i class="ti ti-file-download"></i> Export PDF</button>
+                </div>
+
                 <div style="overflow-x: auto;">
-                    <table class="bento-table">
+                    <table class="flat-table">
+                        <colgroup>
+                            <col style="width: 22%;"> <col style="width: 15%;"> <col style="width: 25%;"> <col style="width: 15%;"> <col style="width: 11%;"> <col style="width: 12%;">
+                        </colgroup>
                         <thead>
                             <tr>
-                                <th>Full Name</th>
+                                <th>Reporter</th> <th>Date</th> <th>Description</th> <th>Evidence</th> <th>Status</th> <th>Action</th>
+                            </tr>
+                        </thead>
+                        <tbody id="reportsTableBody">
+                            <?php
+                            $reports_query = $conn->query("SELECT w.*, COALESCE(u.full_name, 'Deleted user') AS full_name FROM waste_reports w LEFT JOIN users u ON w.resident_id = u.user_id ORDER BY w.created_at DESC");
+                            if($reports_query && $reports_query->num_rows > 0) {
+                                while($row = $reports_query->fetch_assoc()) {
+                                    $raw_date = date('Y-m-d', strtotime($row['created_at']));
+                                    $initial = strtoupper(substr($row['full_name'], 0, 1));
+                                    $is_hl = ($highlight_id > 0 && (int)$row['report_id'] === $highlight_id);
+                                    echo "<tr id='report-" . (int)$row['report_id'] . "' class='report-row" . ($is_hl ? " row-highlight" : "") . "' data-status='" . h($row['status']) . "' data-date='" . h($raw_date) . "'" . ($is_hl ? " aria-current='true'" : "") . ">";
+                                    echo "<td><div class='reporter-cell'><div class='reporter-avatar'>{$initial}</div><span style='font-weight: 600;'>" . htmlspecialchars($row['full_name']) . "</span></div></td>";
+                                    echo "<td style='color: var(--text-muted); font-weight: 500; white-space: nowrap;'>" . date("M d, Y", strtotime($row['created_at'])) . "<div style='font-size: 12px; font-weight: 500; margin-top: 2px; color: var(--text-muted);'><i class='ti ti-clock' style='font-size: 13px; vertical-align: -2px;'></i> " . date("g:i A", strtotime($row['created_at'])) . "</div></td>";
+                                    echo "<td class='desc-cell'>" . h($row['description']) . "</td>";
+                                    echo "<td>";
+                                    if (!empty($row['before_photo_path'])) {
+                                        echo "<a href='uploads/reports/" . h($row['before_photo_path']) . "' target='_blank' rel='noopener' class='photo-link before'><i class='ti ti-photo'></i> Before</a>";
+                                    } else {
+                                        echo "<span style='color: var(--text-muted); font-size: 12px;'>No photo</span>";
+                                    }
+                                    if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
+                                        echo "<a href='uploads/reports/" . h($row['after_photo_path']) . "' target='_blank' rel='noopener' class='photo-link after'><i class='ti ti-photo-check'></i> After</a>";
+                                    }
+                                    echo "</td>";
+                                    if ($row['status'] == 'Pending') {
+                                        echo "<td><span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span></td>";
+                                        echo "<td><a href='resolve_report.php?id=" . $row['report_id'] . "' class='flat-btn primary' style='padding: 6px 14px; font-size: 12px;'>Resolve</a></td>";
+                                    } else {
+                                        echo "<td><span class='status-badge active'><i class='ti ti-check'></i> Cleaned</span></td>";
+                                        echo "<td><span style='color: var(--text-muted); font-size: 13px; font-weight: 500;'><i class='ti ti-archive'></i> Archived</span></td>";
+                                    }
+                                    echo "</tr>";
+                                }
+                            } else {
+                                echo "<tr><td colspan='6' style='text-align: center; padding: 40px;'><i class='ti ti-inbox' style='font-size: 32px; color: #d1d5db; margin-bottom: 8px; display: block;'></i><span style='color: var(--text-muted);'>No records found matching your criteria.</span></td></tr>";
+                            }
+                            ?>
+                        </tbody>
+                    </table>
+                    <div id="reportsEmpty" class="empty-note" hidden>No reports match your filters.</div>
+                </div>
+            </div>
+
+            <?php elseif ($view == 'residents'): ?>
+            <?php $res_status = (string)($_GET['status'] ?? ''); ?>
+            <?php if ($res_status === 'deleted'): ?>
+                <div id="deleteAlert" class="notice success" role="status"><i class="ti ti-circle-check"></i> User account removed successfully.</div>
+            <?php elseif ($res_status === 'blocked'): ?>
+                <div class="notice error" role="alert"><i class="ti ti-alert-circle"></i> This account could not be deleted because other records are still linked to it. You can reject it instead, or check the database links with your developer.</div>
+            <?php elseif ($res_status === 'notfound'): ?>
+                <div class="notice warn" role="status"><i class="ti ti-info-circle"></i> That account no longer exists. The list has been refreshed.</div>
+            <?php endif; ?>
+
+            <div class="flat-card" style="padding: 0; overflow: hidden;">
+                <div class="table-controls" style="padding: 24px; margin: 0; border-bottom: 1px solid var(--border-color);">
+                    <div class="flat-tabs" id="resident-tabs">
+                        <button class="tab-btn active" data-status="Pending" onclick="switchResTab(this)"><i class="ti ti-clock"></i> Pending Approvals</button>
+                        <button class="tab-btn" data-status="Approved" onclick="switchResTab(this)"><i class="ti ti-users"></i> Active Users</button>
+                        <button class="tab-btn" data-status="Rejected" onclick="switchResTab(this)"><i class="ti ti-user-x"></i> Rejected</button>
+                    </div>
+                </div>
+
+                <div style="overflow-x: auto;">
+                    <table class="flat-table">
+                        <colgroup>
+                            <col style="width: 20%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 15%;"> <col style="width: 20%;">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
                                 <th>Username</th>
-                                <th>Phone Number</th>
-                                <th>ID Photo</th>
+                                <th>Phone</th>
+                                <th>Valid ID</th>
+                                <th>Status</th>
                                 <th>Action</th>
                             </tr>
                         </thead>
-                        <tbody>
-                        <?php
-                        $pending_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status='Pending' ORDER BY user_id DESC");
-                        if ($pending_query && $pending_query->num_rows > 0) {
-                            while ($row = $pending_query->fetch_assoc()) {
-                                echo "<tr>";
-                                echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                                echo "<td><span style='color: var(--text-gray);'>" . htmlspecialchars($row['username']) . "</span></td>";
-                                echo "<td><span style='color: var(--text-gray);'>" . htmlspecialchars($row['phone_number']) . "</span></td>";
-                                echo "<td><a href='uploads/ids/" . $row['id_photo_path'] . "' target='_blank' style='background: #F3F4F6; color: var(--text-dark); border: 1px solid #E5E7EB; padding: 6px 14px; border-radius: 20px; font-size: 12px; text-decoration: none; font-weight: 600; display: inline-block;'>View ID</a></td>";
-                                echo "<td>";
-                                echo "<a href='admin_dashboard.php?resident_action=approve&id=" . $row['user_id'] . "' style='background: var(--text-dark); color: #fff; padding: 6px 16px; border-radius: 20px; font-size: 12px; text-decoration: none; font-weight: 600; display: inline-block; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-right: 6px;'>Approve</a>";
-                                echo "<a href='admin_dashboard.php?resident_action=reject&id=" . $row['user_id'] . "' onclick=\"return confirm('Are you sure you want to reject and delete this user?');\" style='background: #FEE2E2; color: #DC2626; padding: 6px 16px; border-radius: 20px; font-size: 12px; text-decoration: none; font-weight: 600; display: inline-block; border: 1px solid #FECACA;'>Reject</a>";
-                                echo "</td>";
-                                echo "</tr>";
+                        <tbody id="residentsTableBody" data-tab="Pending">
+                            <?php
+                            $residents_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status IN ('Pending', 'Approved', 'Rejected') ORDER BY FIELD(account_status, 'Pending', 'Approved', 'Rejected'), full_name ASC");
+                            if ($residents_query && $residents_query->num_rows > 0) {
+                                while ($row = $residents_query->fetch_assoc()) {
+                                    $status = $row['account_status'];
+                                    
+                                    echo "<tr class='resident-row' data-status='{$status}'>";
+                                    echo "<td><strong style='color: var(--text-main);'>" . htmlspecialchars($row['full_name']) . "</strong></td>";
+                                    echo "<td style='color: var(--text-muted); font-weight: 500;'>" . htmlspecialchars($row['username']) . "</td>";
+                                    echo "<td>" . htmlspecialchars($row['phone_number']) . "</td>";
+                                    
+                                    echo "<td>";
+                                    if (!empty($row['id_photo_path'])) {
+                                        $id_path = 'uploads/ids/' . htmlspecialchars($row['id_photo_path']);
+                                        echo "<a href='{$id_path}' target='_blank' class='flat-btn' style='padding: 6px 12px; font-size: 12px;'><i class='ti ti-id'></i> View ID</a>";
+                                    } else {
+                                        echo "<span style='color: var(--text-muted); font-size: 12px;'>No ID</span>";
+                                    }
+                                    echo "</td>";
+
+                                    echo "<td>";
+                                    if ($status == 'Pending') {
+                                        echo "<span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span>";
+                                    } elseif ($status == 'Rejected') {
+                                        echo "<span class='status-badge rejected'><i class='ti ti-x'></i> Rejected</span>";
+                                    } else {
+                                        echo "<span class='status-badge active'><i class='ti ti-shield-check'></i> Active</span>";
+                                    }
+                                    echo "</td>";
+                                    
+                                    echo "<td>";
+                                    echo "<div class='row-actions'>";
+                                    echo "<button type='button' onclick='openUserModal(" . (int)$row['user_id'] . ")' class='flat-btn' style='padding: 6px 16px; font-size: 12px;'><i class='ti ti-eye'></i> View</button>";
+                                    if ($status === 'Approved') {
+                                        echo "<button type='button' onclick='openDeleteModal(" . (int)$row['user_id'] . ")' class='flat-btn danger' style='padding: 6px 14px; font-size: 12px;' aria-label='Delete account'><i class='ti ti-trash'></i> Delete</button>";
+                                    }
+                                    echo "</div>";
+                                    echo "</td></tr>";
+                                }
                             }
-                        } else {
-                            echo "<tr><td colspan='5' style='text-align: center; padding: 30px; color: var(--text-gray);'>No pending approvals at the moment.</td></tr>";
-                        }
-                        ?>
+                            ?>
                         </tbody>
                     </table>
                 </div>
             </div>
 
-            <!-- SUB TAB: Active Residents -->
-            <div id="sub-section-active" style="display: none;">
-                <div style="overflow-x: auto;">
-                    <table class="bento-table">
-                        <thead>
-                            <tr>
-                                <th>Full Name</th>
-                                <th>Username</th>
-                                <th>Phone Number</th>
-                                <th>Status</th>
-                                <th>Action</th> 
-                            </tr>
-                        </thead>
-                        <tbody>
-                        <?php
-                        $active_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status='Approved' ORDER BY full_name ASC");
-                        if ($active_query && $active_query->num_rows > 0) {
-                            while ($row = $active_query->fetch_assoc()) {
-                                echo "<tr>";
-                                echo "<td><strong>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                                echo "<td><span style='color: var(--text-gray);'>" . htmlspecialchars($row['username']) . "</span></td>";
-                                echo "<td><span style='color: var(--text-gray);'>" . htmlspecialchars($row['phone_number']) . "</span></td>";
-                                echo "<td><span class='status-pill status-active'>Active</span></td>";
-                                echo "<td>";
-                                echo "<form action='admin_dashboard.php' method='POST' onsubmit=\"return confirm('Are you sure you want to permanently delete " . htmlspecialchars($row['full_name']) . " from the system?');\" style='margin:0;'>";
-                                echo "<input type='hidden' name='delete_resident_id' value='" . $row['user_id'] . "'>";
-                                echo "<button type='submit' class='btn-outline-pill danger' style='cursor: pointer; padding: 6px 14px; font-size: 12px;'>Delete</button>";
-                                echo "</form>";
-                                echo "</td>";
-                                echo "</tr>";
-                            }
-                        } else {
-                            echo "<tr><td colspan='5' style='text-align: center; padding: 30px; color: var(--text-gray);'>No active residents found.</td></tr>";
-                        }
-                        ?>
-                        </tbody>
+            <!-- MODAL PARA SA RESIDENT INFO (Dito na ilalagay ang Approve/Reject/Delete) -->
+            <div class="modal-overlay" id="userModal" role="dialog" aria-modal="true" aria-labelledby="userModalTitle">
+                <div class="modal-content">
+                    <button type="button" class="modal-close" onclick="closeUserModal()" aria-label="Close"><i class="ti ti-x"></i></button>
+                    <h3 class="modal-title" id="userModalTitle"><i class="ti ti-user-circle" style="color: var(--primary);"></i> Resident Information</h3>
+                    
+                    <table class="modal-table">
+                        <tr><td>Full Name</td><td id="modalName"></td></tr>
+                        <tr><td>Username</td><td id="modalUsername"></td></tr>
+                        <tr><td>Phone Number</td><td id="modalPhone"></td></tr>
+                        <tr><td>Address / Purok</td><td id="modalAddress"></td></tr>
+                        <tr><td>Date of Birth</td><td id="modalDob"></td></tr>
+                        <tr><td>Status</td><td id="modalStatus"></td></tr>
                     </table>
+                    
+                    <div id="modalIdWrap" style="display: flex; gap: 12px; margin-bottom: 24px;">
+                        <a href="#" id="modalIdLink" target="_blank" rel="noopener" class="flat-btn primary" style="flex: 1; justify-content: center; padding: 12px;"><i class="ti ti-id"></i> View Uploaded ID</a>
+                    </div>
+
+                    <!-- CONTAINER PARA SA APPROVE / REJECT / DELETE -->
+                    <div id="modalActionsContainer" style="display: flex; gap: 12px; justify-content: flex-end; border-top: 1px solid var(--border-color); padding-top: 20px;">
+                        <!-- Ipopopulate ito ng JavaScript batay sa status -->
+                    </div>
                 </div>
             </div>
-        </div>
-    </div>
 
-    <!-- =================================================================== -->
-    <!-- VIEW 4: DISPATCH BASURA ALERT                                       -->
-    <!-- =================================================================== -->
-    <div id="section-alert" class="content-section">
-        <div class="header-section">
-            <div>
-                <h1>Basura-Alert Broadcast</h1>
-                <p>Send real-time alerts to residents across all barangay puroks</p>
+            <!-- CONFIRMATION BEFORE DELETING AN ACCOUNT -->
+            <div class="modal-overlay" id="deleteModal" role="alertdialog" aria-modal="true" aria-labelledby="deleteModalTitle" aria-describedby="deleteModalDesc" style="z-index: 1100;">
+                <div class="modal-content confirm-box">
+                    <div class="confirm-icon"><i class="ti ti-trash"></i></div>
+                    <h3 class="confirm-title" id="deleteModalTitle">Delete this account?</h3>
+                    <p class="confirm-text" id="deleteModalDesc">
+                        <strong id="deleteModalName"></strong> <span id="deleteModalUser" class="confirm-user"></span><br>
+                        will be permanently removed together with the uploaded ID photo. This cannot be undone.
+                    </p>
+                    <p class="confirm-note" id="deleteModalReports"></p>
+                    <form method="POST" action="admin_dashboard.php?view=residents" id="deleteForm" style="margin: 0;">
+                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                        <input type="hidden" name="delete_resident_id" id="deleteResidentId" value="">
+                        <div class="confirm-actions">
+                            <button type="button" class="flat-btn" id="deleteCancelBtn" onclick="closeDeleteModal()">Cancel</button>
+                            <button type="submit" class="flat-btn danger-solid" id="deleteConfirmBtn"><i class="ti ti-trash"></i> Delete account</button>
+                        </div>
+                    </form>
+                </div>
             </div>
-        </div>
 
-        <div class="map-card">
-            <div class="section-title" style="margin-top: 0;">Dispatch Alert</div>
-            <p style="color: var(--text-gray); font-size: 14px; margin-bottom: 25px;">Send an official broadcast to notify residents that the garbage truck is approaching their area or to share important waste management updates.</p>
-            
-            <form method="POST" action="admin_dashboard.php">
-                <div class="row">
-                    <div class="col-md-12 mb-4">
-                        <label class="form-label">Select Target Area</label>
-                        <select name="purok_area" class="form-control" required>
-                            <option value="Purok Uno">Purok Uno</option>
-                            <option value="Purok Dos">Purok Dos</option>
-                            <option value="Purok Tres">Purok Tres</option>
-                            <option value="All Areas" selected>All Areas (Barangay-wide)</option>
-                        </select>
+            <?php elseif ($view == 'alert'): ?>
+            <?php if ($alert_sent): ?>
+                <div class="notice success" role="status"><i class="ti ti-circle-check"></i> Basura-Alert sent to all registered residents.</div>
+            <?php endif; ?>
+            <?php if ($alert_error !== ''): ?>
+                <div class="notice error" role="alert"><i class="ti ti-alert-circle"></i> <?php echo h($alert_error); ?></div>
+            <?php endif; ?>
+            <div class="grid-2 align-start">
+                <div class="flat-card">
+                    <div class="card-title" style="justify-content: flex-start; gap: 10px; font-size: 16px; margin-bottom: 24px;">
+                        <i class="ti ti-speakerphone" style="color: var(--primary); font-size: 22px;"></i>
+                        <span style="color: var(--primary);">Compose Broadcast</span>
                     </div>
-                </div>
+                    
+                    <div class="alert-banner">
+                        <i class="ti ti-alert-triangle"></i>
+                        <div><strong>Notice:</strong> This message will be instantly pushed to the resident mobile app or portal. Ensure the information is accurate and urgent.</div>
+                    </div>
 
-                <div class="row">
-                    <div class="col-md-12 mb-4">
-                        <label class="form-label">Broadcast Message</label>
-                        <textarea name="alert_message" class="form-control" required style="height: 120px; resize: none;">The garbage truck is currently near your area! Please prepare and bring out your segregated trash.</textarea>
-                    </div>
-                </div>
-
-                <button type="submit" name="send_basura_alert" class="btn-pill w-100" style="padding: 16px; font-size: 16px;">
-                    Broadcast Alert Now 🚚
-                </button>
-            </form>
-        </div>
-    </div>
-
-    <!-- =================================================================== -->
-    <!-- VIEW 5: SYSTEM SETTINGS                                             -->
-    <!-- =================================================================== -->
-    <div id="section-settings" class="content-section">
-        <div class="header-section">
-            <div>
-                <h1>System Information</h1>
-                <p>Manage official barangay details and configuration</p>
-            </div>
-        </div>
-
-        <?php if ($update_success): ?>
-            <div id="settingsStatusMsg" style="background: #E6F8F3; color: #047857; padding: 16px; border-radius: 16px; text-align: center; font-weight: 500; margin-bottom: 24px;">
-                ✅ Barangay Information Successfully Updated!
-            </div>
-        <?php elseif (!empty($update_error)): ?>
-            <div id="settingsStatusMsg" style="background: #FCE8E8; color: #B91C1C; padding: 16px; border-radius: 16px; text-align: center; font-weight: 500; margin-bottom: 24px;">
-                ❌ <?php echo $update_error; ?>
-            </div>
-        <?php endif; ?>
-
-        <div class="map-card">
-            <form method="POST" action="admin_dashboard.php?view=settings" enctype="multipart/form-data">
-                <div class="section-title" style="margin-top: 0;">Barangay Details</div>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Barangay Name</label>
-                        <input type="text" name="barangay_name" class="form-control" value="<?php echo htmlspecialchars(isset($info['barangay_name']) ? $info['barangay_name'] : ''); ?>" required>
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Barangay Captain</label>
-                        <input type="text" name="captain_name" class="form-control" value="<?php echo htmlspecialchars(isset($info['captain_name']) ? $info['captain_name'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Barangay Secretary</label>
-                        <input type="text" name="secretary_name" class="form-control" value="<?php echo htmlspecialchars(isset($info['secretary_name']) ? $info['secretary_name'] : ''); ?>">
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Contact Number</label>
-                        <input type="text" name="contact_number" class="form-control" value="<?php echo htmlspecialchars(isset($info['contact_number']) ? $info['contact_number'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Municipality / Town</label>
-                        <input type="text" name="municipal" class="form-control" value="<?php echo htmlspecialchars(isset($info['municipal']) ? $info['municipal'] : ''); ?>">
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Province / City</label>
-                        <input type="text" name="city" class="form-control" value="<?php echo htmlspecialchars(isset($info['city']) ? $info['city'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-8 mb-3">
-                        <label class="form-label">Full Address</label>
-                        <input type="text" name="full_address" class="form-control" value="<?php echo htmlspecialchars(isset($info['full_address']) ? $info['full_address'] : ''); ?>">
-                    </div>
-                    <div class="col-md-2 mb-3">
-                        <label class="form-label">ZIP Code</label>
-                        <input type="text" name="zip_code" class="form-control" value="<?php echo htmlspecialchars(isset($info['zip_code']) ? $info['zip_code'] : ''); ?>">
-                    </div>
-                    <div class="col-md-2 mb-3">
-                        <label class="form-label">Region</label>
-                        <input type="text" name="region" class="form-control" value="<?php echo htmlspecialchars(isset($info['region']) ? $info['region'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="section-title">System & Operational Information</div>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">System Subtitle</label>
-                        <input type="text" name="system_subtitle" class="form-control" value="<?php echo htmlspecialchars(isset($info['system_subtitle']) ? $info['system_subtitle'] : ''); ?>">
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Office Hours</label>
-                        <input type="text" name="office_hours" class="form-control" value="<?php echo htmlspecialchars(isset($info['office_hours']) ? $info['office_hours'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-12 mb-3">
-                        <label class="form-label">System Description</label>
-                        <textarea name="system_description" class="form-control" style="height: 90px; resize: none;"><?php echo htmlspecialchars(isset($info['system_description']) ? $info['system_description'] : ''); ?></textarea>
-                    </div>
-                </div>
-
-                <div class="section-title">Emergency Hotlines</div>
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">PNP Station Hotline</label>
-                        <input type="text" name="pnp_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['pnp_hotline']) ? $info['pnp_hotline'] : ''); ?>">
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">BFP Fire Station Hotline</label>
-                        <input type="text" name="bfp_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['bfp_hotline']) ? $info['bfp_hotline'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">MDRRMO / Disaster Hotline</label>
-                        <input type="text" name="mdrrmo_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['mdrrmo_hotline']) ? $info['mdrrmo_hotline'] : ''); ?>">
-                    </div>
-                    <div class="col-md-6 mb-3">
-                        <label class="form-label">Rural Health Unit / Clinic Hotline</label>
-                        <input type="text" name="health_center_hotline" class="form-control" value="<?php echo htmlspecialchars(isset($info['health_center_hotline']) ? $info['health_center_hotline'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="row">
-                    <div class="col-md-12 mb-4">
-                        <label class="form-label">General Hotline / Remarks</label>
-                        <input type="text" name="emergency_hotlines" class="form-control" value="<?php echo htmlspecialchars(isset($info['emergency_hotlines']) ? $info['emergency_hotlines'] : ''); ?>">
-                    </div>
-                </div>
-
-                <div class="section-title">Barangay Branding</div>
-                <div class="row">
-                    <div class="col-md-12 mb-4">
-                        <label class="form-label">Barangay Logo (PNG / JPG)</label>
-                        <input type="file" name="barangay_logo" class="form-control">
-                        <?php if(!empty($info['logo_path'])): ?>
-                            <div style="margin-top: 10px;">
-                                <span style="font-size: 13px; color: var(--text-gray);">Current Logo:</span>
-                                <img src="uploads/logo/<?php echo htmlspecialchars($info['logo_path']); ?>" alt="Barangay Logo" style="height: 40px; margin-left: 10px; border-radius: 6px;">
+                    <form method="POST" action="admin_dashboard.php?view=alert" id="broadcastForm">
+                        <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                        <div class="form-group">
+                            <label class="form-label"><i class="ti ti-users"></i> Target Audience</label>
+                            <div style="position: relative;">
+                                <select name="purok_area" class="form-control" disabled aria-label="Target audience" style="appearance: none; padding-right: 32px;">
+                                    <option value="All Areas" selected>All registered residents</option>
+                                </select>
+                                <i class="ti ti-chevron-down" style="position: absolute; right: 14px; top: 50%; transform: translateY(-50%); pointer-events: none; color: var(--text-muted);"></i>
                             </div>
-                        <?php endif; ?>
-                    </div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label class="form-label"><i class="ti ti-message-2"></i> Message Payload</label>
+                            <textarea name="alert_message" id="alertMsg" class="form-control" required placeholder="Type your alert message here..." maxlength="250" oninput="updateCharCount()"><?php echo h($alert_draft); ?></textarea>
+                            <div style="text-align: right; font-size: 12px; color: var(--text-muted); margin-top: 8px; font-weight: 500;"><span id="charCount">0</span> / 250 characters</div>
+                        </div>
+
+                        <div style="display: flex; gap: 12px; margin-top: 32px;">
+                            <button type="submit" name="send_basura_alert" class="flat-btn primary" style="flex: 1; justify-content: center; padding: 14px; font-size: 15px;"><i class="ti ti-send"></i> Send Broadcast Now</button>
+                        </div>
+                    </form>
                 </div>
 
-                <button type="submit" name="update_info" class="btn-pill w-100" style="padding: 16px; font-size: 16px;">
-                    Save System Settings 💾
-                </button>
-            </form>
-        </div>
-    </div>
-
-</div>
-
-<!-- =================================================================== -->
-<!-- NOTIFICATION PREVIEW MODAL                                          -->
-<!-- =================================================================== -->
-<div id="notifModal" style="display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); backdrop-filter:blur(5px); z-index:2000; align-items:center; justify-content:center; padding:20px;">
-    <div style="background:var(--card-white); width:100%; max-width:420px; border-radius:28px; padding:24px; position:relative; box-shadow:0 10px 40px rgba(0,0,0,0.15);">
-        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 16px;">
-            <h3 style="margin:0; font-size:18px; font-weight:600; color:var(--text-dark);">Report Quick Preview</h3>
-            <button onclick="closeNotifModal()" style="background:#F3F4F6; border:none; border-radius:50%; width:36px; height:36px; cursor:pointer; color:var(--text-dark); display:flex; align-items:center; justify-content:center; font-size: 16px;">✖</button>
-        </div>
-        
-        <img id="notifModalImg" src="" style="width:100%; height:200px; object-fit:cover; border-radius:16px; margin-bottom:16px; border:1px solid #E5E7EB; background: #F9FAFB;">
-        
-        <div style="background:#F9FAFB; padding:16px; border-radius:16px; border:1px solid #E5E7EB;">
-            <p style="margin:0 0 10px; font-size:14px;"><strong style="color:var(--text-dark);">Reporter:</strong> <span id="notifModalName" style="color:var(--text-gray); float:right; font-weight:500;"></span></p>
-            <p style="margin:0 0 10px; font-size:14px;"><strong style="color:var(--text-dark);">Date:</strong> <span id="notifModalDate" style="color:var(--text-gray); float:right; font-weight:500;"></span></p>
-            <hr style="border:none; border-top:1px solid #E5E7EB; margin:12px 0;">
-            <p style="margin:0 0 6px; font-size:14px; font-weight:600; color:var(--text-dark);">Description:</p>
-            <p id="notifModalDesc" style="margin:0; font-size:14px; color:var(--text-gray); line-height:1.5;"></p>
-        </div>
-        
-        <button onclick="switchTab('reports'); closeNotifModal();" style="width:100%; background:var(--text-dark); color:var(--card-lime); border:none; padding:14px; border-radius:24px; font-weight:600; font-size:14px; margin-top:16px; cursor:pointer; transition: 0.2s;">
-            View in Reports Tab
-        </button>
-    </div>
-</div>
-
-<!-- =================================================================== -->
-<!-- JAVASCRIPT SYSTEM LOGIC                                             -->
-<!-- =================================================================== -->
-<script>
-    var mapDash = null;
-
-    window.onload = function() {
-        var urlParams = new URLSearchParams(window.location.search);
-        var viewToOpen = urlParams.get('view');
-        if (viewToOpen) { 
-            switchTab(viewToOpen); 
-        } else { 
-            switchTab('dashboard'); 
-        }
-    };
-
-    // Tab Controller
-    function switchTab(tabName) {
-        // Dismiss the settings success/error banner for good once the admin
-        // leaves the Settings tab, so it doesn't reappear if they come back.
-        if (tabName !== 'settings') {
-            var statusMsg = document.getElementById('settingsStatusMsg');
-            if (statusMsg) {
-                statusMsg.style.display = 'none';
-            }
-        }
-
-        document.querySelectorAll('.content-section').forEach(function(section) {
-            section.style.display = 'none';
-        });
-
-        document.querySelectorAll('.nav-links a').forEach(function(link) {
-            link.classList.remove('active');
-        });
-
-        var targetSection = document.getElementById('section-' + tabName);
-        if (targetSection) {
-            targetSection.style.display = 'block';
-        }
-
-        var targetNav = document.getElementById('nav-' + tabName);
-        if (targetNav) {
-            targetNav.classList.add('active');
-        }
-
-        if (tabName === 'dashboard') {
-            if (!mapDash) {
-                mapDash = setupMap('masterMap');
-            } else {
-                setTimeout(function() { mapDash.invalidateSize(); }, 200);
-            }
-        }
-    }
-
-    // Leaflet GIS Map Initialization
-    var locations = <?php echo json_encode($map_data); ?>;
-    
-    var redPin = new L.Icon({ 
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', 
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', 
-        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] 
-    });
-    
-    var greenPin = new L.Icon({ 
-        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', 
-        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', 
-        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], shadowSize: [41, 41] 
-    });
-
-    function setupMap(mapId) {
-        var m = L.map(mapId).setView([11.45, 123.15], 13);
-        var streetView = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
-        var satelliteView = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
-        
-        streetView.addTo(m);
-        L.control.layers({"🗺️ Street View": streetView, "🛰️ Satellite View": satelliteView}).addTo(m);
-
-        locations.forEach(function(loc) {
-            var currentIcon = (loc.status === 'Pending') ? redPin : greenPin; 
-            var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(m);
-            var dateObj = new Date(loc.created_at);
-            var dateStr = dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-
-            var hoverCard = `
-                <div style="text-align:center; min-width: 160px; padding: 5px;">
-                    <img src="uploads/reports/${loc.before_photo_path}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 5px; margin-bottom: 8px; border: 1px solid #ccc;">
-                    <div style="font-size: 14px; color: ${(loc.status === 'Pending') ? '#F87171' : '#34D399'}; font-weight: bold; margin-bottom: 5px;">
-                        ${(loc.status === 'Pending') ? '🔴 Pending Report' : '✅ Cleaned Area'}
+                <div class="flat-card" style="padding: 0; overflow: hidden; display: flex; flex-direction: column;">
+                    <div class="card-title" style="padding: 24px; margin: 0; border-bottom: 1px solid var(--border-color); background: transparent; justify-content: space-between;">
+                        <div style="display: flex; align-items: center; gap: 10px; font-size: 16px;">
+                            <i class="ti ti-history" style="color: var(--primary); font-size: 22px;"></i>
+                            <span style="color: var(--primary);">Recent Broadcasts</span>
+                        </div>
+                        <span style="font-size: 12px; font-weight: 500; background: #f9fafb; border: 1px solid var(--border-color); padding: 4px 10px; border-radius: 20px; color: var(--text-muted);">Last 5</span>
                     </div>
-                    <div style="font-size: 12px; text-align: left; line-height: 1.4;">
-                        <b>Reporter:</b> ${loc.full_name}<br>
-                        <b>Date:</b> ${dateStr}<br>
-                        <b>Desc:</b> <span style="color:#555;">"${loc.description}"</span>
+                    
+                    <div class="history-list" style="flex: 1; overflow-y: auto;">
+                        <?php
+                        $history_query = $conn->query("SELECT * FROM basura_alerts ORDER BY alert_id DESC LIMIT 5");
+                        if($history_query && $history_query->num_rows > 0) {
+                            while($h = $history_query->fetch_assoc()) {
+                                $raw_date = $h['sent_at'] ?? ($h['created_at'] ?? null);
+                                $date_display = $raw_date ? date("M d, g:i A", strtotime($raw_date)) : '-';
+                                ?>
+                                <div class="history-item">
+                                    <div class="history-header">
+                                        <span class="history-target"><i class="ti ti-map-pin"></i> <?php echo htmlspecialchars($h['purok_area'] ?? 'All Areas'); ?></span>
+                                        <span class="history-time"><i class="ti ti-clock" style="font-size: 14px;"></i> <?php echo $date_display; ?></span>
+                                    </div>
+                                    <div class="history-msg"><?php echo htmlspecialchars($h['message']); ?></div>
+                                </div>
+                                <?php
+                            }
+                        } else {
+                            echo "<div style='padding: 48px 24px; text-align: center; color: var(--text-muted); font-size: 14px; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100%;'>";
+                            echo "  <div style='width: 64px; height: 64px; border-radius: 50%; background: var(--bg-body); display: flex; align-items: center; justify-content: center; margin-bottom: 16px;'>";
+                            echo "      <i class='ti ti-inbox' style='font-size: 32px; color: #d1d5db;'></i>";
+                            echo "  </div>";
+                            echo "  <h3 style='margin: 0 0 8px 0; font-size: 16px; color: var(--text-main);'>No Broadcasts Yet</h3>";
+                            echo "  <p style='margin: 0; color: var(--text-muted); font-size: 13px;'>Messages you send will appear here.</p>";
+                            echo "</div>";
+                        }
+                        ?>
                     </div>
                 </div>
-            `;
-            marker.bindTooltip(hoverCard, { direction: 'top', opacity: 1 });
-        });
-        return m;
-    }
+            </div>
 
-    // Reports Table Search & Filter
-    let currentStatusFilter = 'All';
-    let searchInput = document.getElementById('searchInput');
-    if (searchInput) {
-        searchInput.addEventListener('keyup', applyFilters);
-    }
+            <!-- CONFIRMATION BEFORE SENDING A BROADCAST -->
+            <div class="modal-overlay" id="broadcastModal" role="alertdialog" aria-modal="true" aria-labelledby="broadcastModalTitle" aria-describedby="broadcastModalDesc" style="z-index: 1100;">
+                <div class="modal-content confirm-box">
+                    <div class="confirm-icon info"><i class="ti ti-speakerphone"></i></div>
+                    <h3 class="confirm-title" id="broadcastModalTitle">Send this broadcast?</h3>
+                    <p class="confirm-text" id="broadcastModalDesc">This alert is pushed instantly to <strong>all registered residents</strong> and cannot be recalled once it is sent.</p>
+                    <div class="confirm-preview">
+                        <div id="broadcastPreview"></div>
+                        <span id="broadcastCount"></span>
+                    </div>
+                    <div class="confirm-actions">
+                        <button type="button" class="flat-btn" id="broadcastCancelBtn" onclick="closeBroadcastModal()">Cancel</button>
+                        <button type="button" class="flat-btn primary" id="broadcastConfirmBtn"><i class="ti ti-send"></i> Send broadcast</button>
+                    </div>
+                </div>
+            </div>
 
-    function filterTable(status) {
-        currentStatusFilter = status;
-        document.getElementById('filter-All').classList.remove('active');
-        document.getElementById('filter-Pending').classList.remove('active');
-        document.getElementById('filter-Cleaned').classList.remove('active');
-        document.getElementById('filter-' + status).classList.add('active');
-        applyFilters();
-    }
-
-    function applyFilters() {
-        let searchText = document.getElementById('searchInput').value.toLowerCase();
-        let rows = document.querySelectorAll('.report-row');
-        
-        rows.forEach(row => {
-            let rowText = row.innerText.toLowerCase();
-            let rowStatus = row.getAttribute('data-status');
-            let matchesSearch = rowText.includes(searchText);
-            let matchesStatus = (currentStatusFilter === 'All') || (rowStatus === currentStatusFilter);
+            <?php elseif ($view == 'settings'): ?>
+            <!-- Settings content -->
+            <?php if ($update_success): ?>
+                <div style="background: var(--primary-light); border: 1px solid var(--primary); color: var(--primary-dark); padding: 16px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                    <i class="ti ti-circle-check" style="font-size: 20px;"></i> Profile configuration saved successfully.
+                </div>
+            <?php endif; ?>
             
-            if (matchesSearch && matchesStatus) {
-                row.style.display = ''; 
-            } else {
-                row.style.display = 'none'; 
-            }
+            <?php if ($update_error !== ''): ?>
+                <div class="notice warn" role="alert"><i class="ti ti-alert-triangle"></i> <?php echo h($update_error); ?></div>
+            <?php endif; ?>
+
+            <?php if ($pass_success): ?>
+                <div style="background: var(--primary-light); border: 1px solid var(--primary); color: var(--primary-dark); padding: 16px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                    <i class="ti ti-lock-check" style="font-size: 20px;"></i> Password updated successfully.
+                </div>
+            <?php endif; ?>
+
+            <?php if (!empty($pass_error)): ?>
+                <div style="background: #fef2f2; border: 1px solid #fecaca; color: #dc2626; padding: 16px; border-radius: 8px; margin-bottom: 24px; font-size: 14px; font-weight: 500; display: flex; align-items: center; gap: 8px;">
+                    <i class="ti ti-alert-circle" style="font-size: 20px;"></i> <?php echo h($pass_error); ?>
+                </div>
+            <?php endif; ?>
+            
+            <div class="flat-card">
+                <form method="POST" action="admin_dashboard.php?view=settings" enctype="multipart/form-data">
+                    <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                    <div class="card-title" style="justify-content: flex-start; gap: 10px; font-size: 16px; margin-bottom: 24px;">
+                        <i class="ti ti-building" style="color: var(--primary); font-size: 22px;"></i>
+                        <span style="color: var(--primary);">Barangay Profile & Branding</span>
+                    </div>
+
+                    <div class="settings-top">
+                        <div style="text-align: center; padding: 20px; background: var(--bg-body); border-radius: 12px; border: 1px dashed var(--border-color);">
+                            <label class="form-label" style="justify-content: center; margin-bottom: 16px;"><i class="ti ti-photo"></i> Barangay Logo</label>
+                            <?php 
+                                $current_logo = $logo_src;
+                            ?>
+                            <img src="<?php echo htmlspecialchars($current_logo); ?>" alt="Logo Preview" style="width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid #fff; box-shadow: 0 4px 10px rgba(0,0,0,0.1); margin-bottom: 16px;" onerror="this.onerror=null;this.src='tanzalogo.jpg'">
+                            <input type="file" name="barangay_logo" class="form-control" accept=".jpg,.jpeg,.png" style="font-size: 12px; padding: 8px;">
+                            <small style="display: block; margin-top: 8px; color: var(--text-muted); font-size: 11px;">Max size: 2MB (JPG/PNG)</small>
+                        </div>
+
+                        <div class="grid-2 align-start">
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label"><i class="ti ti-map-2"></i> Barangay Name</label>
+                                <input type="text" name="barangay_name" class="form-control" value="<?php echo htmlspecialchars($info['barangay_name'] ?? ''); ?>" required>
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label"><i class="ti ti-phone"></i> Main Office Contact</label>
+                                <input type="text" name="contact_number" class="form-control" value="<?php echo htmlspecialchars($info['contact_number'] ?? ''); ?>">
+                            </div>
+                        </div>
+                    </div>
+
+                    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0 0 32px 0;">
+
+                    <div class="grid-2 mb-32">
+                        <div style="border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; background: #f9fafb;">
+                            <h4 style="margin: 0 0 16px 0; font-size: 15px; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+                                <i class="ti ti-user-star" style="color: var(--primary); font-size: 20px;"></i> Barangay Captain
+                            </h4>
+                            <div class="form-group">
+                                <label class="form-label">Full Name</label>
+                                <input type="text" name="captain_name" class="form-control" value="<?php echo htmlspecialchars($info['captain_name'] ?? ''); ?>">
+                            </div>
+                            <div class="form-group" style="margin-bottom: 0;">
+                                <label class="form-label">Contact Number</label>
+                                <input type="text" name="captain_contact" class="form-control" value="<?php echo htmlspecialchars($info['captain_contact'] ?? ''); ?>" placeholder="09xx xxx xxxx">
+                            </div>
+                        </div>
+
+                        <div style="border: 1px solid var(--border-color); border-radius: 12px; padding: 24px; background: #f9fafb;">
+                            <h4 style="margin: 0 0 16px 0; font-size: 15px; color: var(--text-main); display: flex; align-items: center; gap: 8px;">
+                                <i class="ti ti-user-check" style="color: var(--primary); font-size: 20px;"></i> Barangay Secretary
+                            </h4>
+                            
+                            <div style="display: flex; gap: 20px; align-items: flex-start;">
+                                <div style="text-align: center; flex-shrink: 0;">
+                                    <?php 
+                                        $sec_pic_preview = !empty($info['secretary_profile_pic']) ? 'uploads/profiles/' . $info['secretary_profile_pic'] : 'https://placehold.co/80x80/e5e7eb/6b7280?text=Photo';
+                                    ?>
+                                    <img src="<?php echo htmlspecialchars($sec_pic_preview); ?>" alt="Secretary Preview" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid #fff; box-shadow: 0 2px 5px rgba(0,0,0,0.1); margin-bottom: 8px;">
+                                    <input type="file" name="secretary_pic" class="form-control" accept=".jpg,.jpeg,.png" style="font-size: 10px; padding: 4px; width: 100px;">
+                                </div>
+                                
+                                <div style="flex: 1;">
+                                    <div class="form-group" style="margin-bottom: 16px;">
+                                        <label class="form-label">Full Name</label>
+                                        <input type="text" name="secretary_name" class="form-control" value="<?php echo htmlspecialchars($info['secretary_name'] ?? ''); ?>">
+                                    </div>
+                                    <div class="form-group" style="margin-bottom: 0;">
+                                        <label class="form-label">Contact Number</label>
+                                        <input type="text" name="secretary_contact" class="form-control" value="<?php echo htmlspecialchars($info['secretary_contact'] ?? ''); ?>" placeholder="09xx xxx xxxx">
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <hr style="border: 0; border-top: 1px solid var(--border-color); margin: 0 0 32px 0;">
+
+                    <div class="card-title" style="justify-content: flex-start; gap: 10px; font-size: 16px; margin-bottom: 24px;">
+                        <i class="ti ti-phone-call" style="color: var(--primary); font-size: 22px;"></i>
+                        <span style="color: var(--primary);">Emergency Hotlines</span>
+                    </div>
+
+                    <div class="grid-2 mb-24">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-shield"></i> Police Station</label>
+                            <input type="text" name="pnp_hotline" class="form-control" value="<?php echo htmlspecialchars($info['pnp_hotline'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-flame"></i> Fire Station (BFP)</label>
+                            <input type="text" name="bfp_hotline" class="form-control" value="<?php echo htmlspecialchars($info['bfp_hotline'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-ambulance"></i> MDRRMO</label>
+                            <input type="text" name="mdrrmo_hotline" class="form-control" value="<?php echo htmlspecialchars($info['mdrrmo_hotline'] ?? ''); ?>">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-activity"></i> Health Center</label>
+                            <input type="text" name="health_center_hotline" class="form-control" value="<?php echo htmlspecialchars($info['health_center_hotline'] ?? ''); ?>">
+                        </div>
+                    </div>
+
+                    <div style="background: var(--bg-body); padding: 20px; border-radius: 12px; border: 1px solid var(--border-color); margin-bottom: 24px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 600; color: var(--text-main);"><i class="ti ti-list-details" style="color: var(--primary); vertical-align: middle; margin-right: 4px;"></i> Other Important Contacts</h4>
+                            <button type="button" id="addHotlineBtn" class="flat-btn primary" style="padding: 6px 12px; font-size: 12px;"><i class="ti ti-plus"></i> Add Contact</button>
+                        </div>
+                        
+                        <div id="customHotlinesContainer">
+                            <?php
+                            $custom_hotlines_arr = !empty($info['custom_hotlines']) ? json_decode($info['custom_hotlines'], true) : [];
+                            if (is_array($custom_hotlines_arr) && count($custom_hotlines_arr) > 0) {
+                                foreach ($custom_hotlines_arr as $index => $ch) {
+                                    ?>
+                                    <div class="hotline-row">
+                                        <div>
+                                            <input type="text" name="custom_hotline_names[]" class="form-control" placeholder="e.g., Barangay Tanod" value="<?php echo htmlspecialchars($ch['name'] ?? ''); ?>" required>
+                                        </div>
+                                        <div>
+                                            <input type="text" name="custom_hotline_numbers[]" class="form-control" placeholder="e.g., 09123456789" value="<?php echo htmlspecialchars($ch['number'] ?? ''); ?>" required>
+                                        </div>
+                                        <button type="button" class="flat-btn danger remove-hotline" style="padding: 0 16px;" aria-label="Remove contact"><i class="ti ti-trash"></i></button>
+                                    </div>
+                                    <?php
+                                }
+                            } else {
+                                ?>
+                                <div class="hotline-row">
+                                    <div>
+                                        <input type="text" name="custom_hotline_names[]" class="form-control" placeholder="e.g., Barangay Tanod">
+                                    </div>
+                                    <div>
+                                        <input type="text" name="custom_hotline_numbers[]" class="form-control" placeholder="e.g., 09123456789">
+                                    </div>
+                                    <button type="button" class="flat-btn danger remove-hotline" style="padding: 0 16px;" aria-label="Remove contact"><i class="ti ti-trash"></i></button>
+                                </div>
+                                <?php
+                            }
+                            ?>
+                        </div>
+                    </div>
+                    
+                    <input type="hidden" name="full_address" value="<?php echo htmlspecialchars($info['full_address'] ?? ''); ?>">
+                    <input type="hidden" name="zip_code" value="<?php echo htmlspecialchars($info['zip_code'] ?? ''); ?>">
+                    <input type="hidden" name="region" value="<?php echo htmlspecialchars($info['region'] ?? ''); ?>">
+                    <input type="hidden" name="system_subtitle" value="<?php echo htmlspecialchars($info['system_subtitle'] ?? ''); ?>">
+                    <input type="hidden" name="system_description" value="<?php echo htmlspecialchars($info['system_description'] ?? ''); ?>">
+                    <input type="hidden" name="city" value="<?php echo htmlspecialchars($info['city'] ?? ''); ?>">
+                    <input type="hidden" name="municipal" value="<?php echo htmlspecialchars($info['municipal'] ?? ''); ?>">
+                    <input type="hidden" name="office_hours" value="<?php echo htmlspecialchars($info['office_hours'] ?? ''); ?>">
+                    <input type="hidden" name="emergency_hotlines" value="<?php echo htmlspecialchars($info['emergency_hotlines'] ?? ''); ?>">
+                    
+                    <div style="margin-top: 32px;">
+                        <button type="submit" name="update_info" class="flat-btn primary" style="padding: 12px 24px; font-size: 15px;">
+                            <i class="ti ti-device-floppy"></i> Save Profile Configuration
+                        </button>
+                    </div>
+                </form>
+            </div>
+
+            <div class="flat-card">
+                <div class="card-title" style="justify-content: flex-start; gap: 10px; font-size: 16px; margin-bottom: 24px;">
+                    <i class="ti ti-lock" style="color: var(--primary); font-size: 22px;"></i>
+                    <span style="color: var(--primary);">Change Password</span>
+                </div>
+
+                <form method="POST" action="admin_dashboard.php?view=settings">
+                    <input type="hidden" name="csrf" value="<?php echo h($csrf); ?>">
+                    <div class="grid-3">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-key"></i> Current Password</label>
+                            <input type="password" name="current_password" class="form-control" placeholder="Enter current password" required>
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-lock-square"></i> New Password</label>
+                            <input type="password" name="new_password" class="form-control" placeholder="Enter new password" required minlength="8">
+                        </div>
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label class="form-label"><i class="ti ti-lock-check"></i> Confirm New Password</label>
+                            <input type="password" name="confirm_password" class="form-control" placeholder="Confirm new password" required minlength="8">
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 32px;">
+                        <button type="submit" name="change_password" class="flat-btn primary" style="padding: 12px 24px; font-size: 15px;">
+                            <i class="ti ti-shield-check"></i> Update Password
+                        </button>
+                    </div>
+                </form>
+            </div>
+            <?php endif; ?>
+
+        </main>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+    const CSRF = <?php echo json_encode($csrf); ?>;
+    // Only the fields the modal needs (no password hashes)
+    const residentsData = <?php echo json_encode((object)$all_residents, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+
+    // Escape anything that came from the database before putting it into innerHTML
+    function esc(value) {
+        return String(value ?? '').replace(/[&<>"']/g, function (c) {
+            return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
         });
     }
 
-    // Resident Sub-Tabs Toggle
-    function switchResTab(tabName) {
-        document.getElementById('sub-section-pending').style.display = 'none';
-        document.getElementById('sub-section-active').style.display = 'none';
-        
-        document.getElementById('tab-pending').classList.remove('active');
-        document.getElementById('tab-active').classList.remove('active');
-        
-        document.getElementById('sub-section-' + tabName).style.display = 'block';
-        document.getElementById('tab-' + tabName).classList.add('active');
+    const STATUS_LABEL = { Pending: 'Pending', Approved: 'Active', Rejected: 'Rejected' };
+    const STATUS_CLASS = { Pending: 'pending', Approved: 'active', Rejected: 'rejected' };
+    const STATUS_ICON  = { Pending: 'ti-clock', Approved: 'ti-shield-check', Rejected: 'ti-x' };
+    const EMPTY_TEXT   = { Pending: 'pending resident approvals', Approved: 'active residents', Rejected: 'rejected residents' };
+
+    // ---------- Resident modal ----------
+    let lastFocusedElement = null;
+
+    function actionButton(fields, cls, icon, label, confirmMsg) {
+        const all = Object.assign({ csrf: CSRF }, fields);
+        const inputs = Object.keys(all).map(function (k) {
+            return `<input type="hidden" name="${esc(k)}" value="${esc(all[k])}">`;
+        }).join('');
+        const onsubmit = confirmMsg ? ` onsubmit="return confirm('${esc(confirmMsg)}');"` : '';
+        return `<form action="admin_dashboard.php?view=residents" method="POST"${onsubmit} style="margin:0;">${inputs}<button type="submit" class="flat-btn ${cls}" style="padding: 10px 20px;"><i class="ti ${icon}"></i> ${esc(label)}</button></form>`;
     }
 
-    // Notification Dropdown Toggle
-    var adminNotifBtn = document.getElementById("adminNotifBtn");
-    if(adminNotifBtn) {
-        adminNotifBtn.onclick = function() {
-            var box = document.getElementById("adminNotifBox");
-            if (box.style.display === "none" || box.style.display === "") {
-                box.style.display = "block";
-                
-                let maxId = this.getAttribute("data-maxid");
-                document.cookie = "last_seen_notif_id=" + maxId + "; path=/; max-age=" + (30*24*60*60);
-                
-                this.innerHTML = "◧ Notifications";
-                this.style.background = "#F9FAFB";
-                this.style.color = "var(--text-dark)";
-                this.style.border = "1px solid #E5E7EB";
-            } else {
-                box.style.display = "none";
-            }
-        };
+    function deleteButton(id) {
+        return `<button type="button" class="flat-btn danger" style="padding: 10px 20px;" onclick="openDeleteModal(${Number(id)})"><i class="ti ti-trash"></i> Delete User</button>`;
     }
 
-    // Notification Modal Logic
-    function openNotifModal(img, name, date, desc) {
-        document.getElementById("adminNotifBox").style.display = "none";
-        
-        let imagePath = img ? 'uploads/reports/' + img : 'https://via.placeholder.com/400x300?text=No+Photo';
-        document.getElementById('notifModalImg').src = imagePath;
-        document.getElementById('notifModalName').innerText = name;
-        document.getElementById('notifModalDate').innerText = date;
-        document.getElementById('notifModalDesc').innerText = desc;
-        
-        document.getElementById('notifModal').style.display = 'flex';
+    // ---------- Delete confirmation ----------
+    let deleteReturnFocus = null;
+
+    function openDeleteModal(id) {
+        const user = residentsData[id];
+        if (!user) return;
+        deleteReturnFocus = document.activeElement;
+
+        document.getElementById('deleteResidentId').value = user.user_id;
+        document.getElementById('deleteModalName').textContent = user.full_name;
+        document.getElementById('deleteModalUser').textContent = user.username ? '(@' + user.username + ')' : '';
+        const n = Number(user.report_count) || 0;
+        document.getElementById('deleteModalReports').textContent =
+            n === 0 ? 'This resident has not submitted any reports.'
+                    : 'Reports submitted by this resident: ' + n;
+
+        const btn = document.getElementById('deleteConfirmBtn');
+        btn.disabled = false;
+        btn.innerHTML = '<i class="ti ti-trash"></i> Delete account';
+
+        document.getElementById('deleteModal').style.display = 'flex';
+        document.getElementById('deleteCancelBtn').focus();   // Cancel is the safe default
     }
 
-    function closeNotifModal() {
-        document.getElementById('notifModal').style.display = 'none';
+    function closeDeleteModal() {
+        const modal = document.getElementById('deleteModal');
+        if (!modal || modal.style.display !== 'flex') return false;
+        modal.style.display = 'none';
+        if (deleteReturnFocus && deleteReturnFocus.focus) deleteReturnFocus.focus();
+        return true;
     }
 
-    // Print Report Generation
-    function generatePrintReport() {
-        let fromDate = document.getElementById('printFromDate').value;
-        let toDate = document.getElementById('printToDate').value;
-        let printUrl = 'print_report.php';
-        
-        if (fromDate && toDate) {
-            printUrl += `?from=${fromDate}&to=${toDate}`;
-        } else if (fromDate || toDate) {
-            alert("Please select both 'From' and 'To' dates to print a specific range. Leave both blank to print all records.");
-            return;
+    document.getElementById('deleteModal')?.addEventListener('click', function (e) {
+        if (e.target.id === 'deleteModal') closeDeleteModal();
+    });
+
+    // stop double clicks from sending the request twice
+    document.getElementById('deleteForm')?.addEventListener('submit', function () {
+        const btn = document.getElementById('deleteConfirmBtn');
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ti ti-loader"></i> Deleting...';
+    });
+
+    function openUserModal(id) {
+        const user = residentsData[id];
+        if (!user) return;
+        lastFocusedElement = document.activeElement;
+
+        document.getElementById('modalName').textContent = user.full_name;
+        document.getElementById('modalUsername').textContent = user.username;
+        document.getElementById('modalPhone').textContent = user.phone_number;
+        document.getElementById('modalAddress').textContent = user.address || 'N/A';
+        document.getElementById('modalDob').textContent = user.date_of_birth || 'N/A';
+
+        const st = user.account_status;
+        document.getElementById('modalStatus').innerHTML =
+            `<span class="status-badge ${STATUS_CLASS[st] || 'pending'}"><i class="ti ${STATUS_ICON[st] || 'ti-clock'}"></i> ${esc(STATUS_LABEL[st] || st)}</span>`;
+
+        const idLink = document.getElementById('modalIdLink');
+        const idWrap = document.getElementById('modalIdWrap');
+        if (user.id_photo_path) {
+            idLink.href = 'uploads/ids/' + encodeURIComponent(user.id_photo_path);
+            idWrap.style.display = 'flex';
+        } else {
+            idWrap.style.display = 'none';
         }
-        
-        window.open(printUrl, '_blank');
+
+        let actions = '';
+        if (st === 'Pending') {
+            actions += actionButton({ resident_action: 'approve', id: user.user_id, 'return': 'residents' }, 'primary', 'ti-check', 'Approve');
+            actions += actionButton({ resident_action: 'reject', id: user.user_id, 'return': 'residents' }, 'danger', 'ti-x', 'Reject', 'Reject this resident?');
+        } else if (st === 'Rejected') {
+            actions += actionButton({ resident_action: 'approve', id: user.user_id, 'return': 'residents' }, 'primary', 'ti-check', 'Approve instead');
+            actions += deleteButton(user.user_id);
+        } else {
+            actions += deleteButton(user.user_id);
+        }
+        document.getElementById('modalActionsContainer').innerHTML = actions;
+
+        const modal = document.getElementById('userModal');
+        modal.style.display = 'flex';
+        modal.querySelector('.modal-close').focus();
     }
+
+    function closeUserModal() {
+        const modal = document.getElementById('userModal');
+        if (!modal || modal.style.display !== 'flex') return;
+        modal.style.display = 'none';
+        if (lastFocusedElement && lastFocusedElement.focus) lastFocusedElement.focus();
+    }
+
+    document.getElementById('userModal')?.addEventListener('click', function (e) {
+        if (e.target.id === 'userModal') closeUserModal();
+    });
+
+    document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+            if (closeBroadcastModal()) return;
+            if (closeDeleteModal()) return;   // close the confirmation first, keep the resident popup open
+            closeUserModal();
+            if (isNotifOpen) setNotifOpen(false);
+        }
+    });
+
+    // ---------- Clock ----------
+    function updateDateTime() {
+        const now = new Date();
+        const options = { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' };
+        const el = document.getElementById('liveDateTime');
+        if (el) el.innerHTML = `<i class="ti ti-clock"></i> ${now.toLocaleDateString('en-US', options)}`;
+    }
+    setInterval(updateDateTime, 30000); // only minutes are shown
+    updateDateTime();
+
+    // Open the resident modal when coming from the dashboard widget (?view_user_id=)
+    <?php if (isset($_GET['view_user_id']) && $view === 'residents'): ?>
+    window.addEventListener('load', function () {
+        const id = <?php echo (int)$_GET['view_user_id']; ?>;
+        const user = residentsData[id];
+        if (user) {
+            const tab = document.querySelector('#resident-tabs [data-status="' + user.account_status + '"]');
+            if (tab) switchResTab(tab);
+            openUserModal(id);
+        }
+        if (window.history.replaceState) {
+            const url = new URL(window.location.href);
+            url.searchParams.delete('view_user_id');
+            window.history.replaceState({ path: url.href }, '', url.href);
+        }
+    });
+    <?php endif; ?>
+
+    if (window.history.replaceState) {
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('status') || url.searchParams.has('sent') || url.searchParams.has('resolved')) {
+            url.searchParams.delete('status');
+            url.searchParams.delete('sent');
+            url.searchParams.delete('resolved');
+            window.history.replaceState({ path: url.href }, '', url.href);
+        }
+    }
+
+    setTimeout(function () { const b = document.getElementById('deleteAlert'); if (b) b.style.display = 'none'; }, 3000);
+
+    // ---------- Notifications ----------
+    let isNotifOpen = false;
+    let latestCount = 0;
+    let dismissedCount = 0;
+    try { dismissedCount = parseInt(sessionStorage.getItem('notifDismissed') || '0', 10) || 0; } catch (e) {}
+
+    function renderBadge() {
+        const badge = document.getElementById('notifCount');
+        const unseen = Math.max(0, latestCount - dismissedCount);
+        if (unseen > 0) {
+            badge.innerText = unseen;
+            badge.style.display = 'flex';
+        } else {
+            badge.style.display = 'none';
+        }
+    }
+
+    function setNotifOpen(open) {
+        isNotifOpen = open;
+        document.getElementById('notifDropdown').classList.toggle('active', open);
+        document.getElementById('notifBtn').setAttribute('aria-expanded', open ? 'true' : 'false');
+        if (open) {
+            // Remember what was seen so the badge doesn't come back on the next refresh
+            dismissedCount = latestCount;
+            try { sessionStorage.setItem('notifDismissed', String(dismissedCount)); } catch (e) {}
+            renderBadge();
+        }
+    }
+
+    function toggleNotifications() { setNotifOpen(!isNotifOpen); }
+
+    document.addEventListener('click', function (event) {
+        const dropdown = document.getElementById('notifDropdown');
+        const btn = document.getElementById('notifBtn');
+        if (isNotifOpen && !btn.contains(event.target) && !dropdown.contains(event.target)) {
+            setNotifOpen(false);
+        }
+    });
+
+    function fetchNotifications() {
+        fetch('fetch_notifications.php')
+            .then(function (response) {
+                if (!response.ok) throw new Error('HTTP ' + response.status);
+                return response.json();
+            })
+            .then(function (data) {
+                const list = document.getElementById('notifList');
+                latestCount = Number(data.count) || 0;
+                if (latestCount < dismissedCount) {
+                    dismissedCount = latestCount; // reports were opened on the Reports page
+                    try { sessionStorage.setItem('notifDismissed', String(dismissedCount)); } catch (e) {}
+                }
+                renderBadge();
+                document.getElementById('notifHeaderText').innerText = `${latestCount} unread`;
+
+                if (data.notifications && data.notifications.length > 0) {
+                    list.innerHTML = data.notifications.map(function (n) {
+                        return `<a href="resolve_report.php?id=${encodeURIComponent(n.id)}" class="notif-item">
+                                    <div class="title">${esc(n.name)}</div>
+                                    <div class="desc">${esc(n.desc)}</div>
+                                    <div class="time"><i class="ti ti-clock"></i> ${esc(n.time)}</div>
+                                </a>`;
+                    }).join('');
+                } else {
+                    list.innerHTML = `<div style="padding: 24px; text-align: center; color: var(--text-muted); font-size: 13px;">No new notifications</div>`;
+                }
+            })
+            .catch(function (err) { console.error('Error fetching notifications:', err); });
+    }
+
+    setInterval(fetchNotifications, 10000);
+    fetchNotifications();
+
+    // ---------- Reports filters ----------
+    function filterTableDropdown() {
+        const statusFilter = document.getElementById('statusFilter').value;
+        const startDate = document.getElementById('startDate').value;
+        const endInput = document.getElementById('endDate');
+        const endDate = endInput.value;
+        const searchText = (document.getElementById('searchInput').value || '').toLowerCase();
+        endInput.min = startDate || '';
+
+        const rows = document.querySelectorAll('.report-row');
+        let visible = 0;
+        rows.forEach(function (row) {
+            const rowStatus = row.getAttribute('data-status');
+            const rowDate = row.getAttribute('data-date');
+            let show = row.innerText.toLowerCase().includes(searchText)
+                && (statusFilter === 'All' || rowStatus === statusFilter);
+            if (startDate && rowDate < startDate) show = false;
+            if (endDate && rowDate > endDate) show = false;
+            row.style.display = show ? '' : 'none';
+            if (show) visible++;
+        });
+
+        const empty = document.getElementById('reportsEmpty');
+        if (empty) empty.hidden = rows.length === 0 || visible > 0;
+    }
+
+    document.getElementById('searchInput')?.addEventListener('input', filterTableDropdown);
+
+    // ---------- Report opened from a map pin: scroll to it, then clear the highlight on the next click ----------
+    (function () {
+        const row = document.querySelector('.report-row.row-highlight');
+        if (!row) return;
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        row.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('highlight') && window.history.replaceState) {   // a refresh should not highlight again
+            url.searchParams.delete('highlight');
+            window.history.replaceState({ path: url.href }, '', url.href);
+        }
+        function clear() { row.classList.remove('row-highlight'); row.removeAttribute('aria-current'); }
+        setTimeout(function () {
+            document.addEventListener('click', clear, { once: true });
+            document.addEventListener('keydown', clear, { once: true });
+        }, 400);
+    })();
+
+    // ---------- Resident tabs ----------
+    function switchResTab(btn) {
+        const target = btn.getAttribute('data-status');
+        document.querySelectorAll('#resident-tabs .tab-btn').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+
+        const tbody = document.getElementById('residentsTableBody');
+        tbody.dataset.tab = target; // CSS hides the other statuses
+        const count = tbody.querySelectorAll('.resident-row[data-status="' + target + '"]').length;
+
+        let emptyRow = document.getElementById('emptyStateRow');
+        if (!emptyRow) {
+            emptyRow = document.createElement('tr');
+            emptyRow.id = 'emptyStateRow';
+            emptyRow.innerHTML = `<td colspan="6" style="padding: 60px 24px; text-align: center;">
+                <div style="display: inline-flex; align-items: center; justify-content: center; width: 64px; height: 64px; border-radius: 50%; background: var(--bg-body); margin-bottom: 16px;">
+                    <i class="ti ti-mood-smile" style="font-size: 32px; color: #9ca3af;"></i>
+                </div>
+                <h3 style="margin: 0 0 8px 0; color: var(--text-main); font-size: 16px;">All caught up!</h3>
+                <p id="emptyStateMsg" style="margin: 0; color: var(--text-muted); font-size: 14px;"></p>
+            </td>`;
+            tbody.appendChild(emptyRow);
+        }
+        document.getElementById('emptyStateMsg').textContent = `There are no ${EMPTY_TEXT[target] || 'residents'} right now.`;
+        emptyRow.hidden = count > 0;
+    }
+
+    // Start on the tab named in ?tab= (default: Pending) so the page does not jump back after an action
+    (function () {
+        if (!document.getElementById('resident-tabs')) return;
+        const url = new URL(window.location.href);
+        const wanted = url.searchParams.get('tab');
+        const tabName = ['Pending', 'Approved', 'Rejected'].indexOf(wanted) !== -1 ? wanted : 'Pending';
+        const btn = document.querySelector('#resident-tabs [data-status="' + tabName + '"]');
+        if (btn) switchResTab(btn);
+        if (url.searchParams.has('tab') && window.history.replaceState) {
+            url.searchParams.delete('tab');
+            window.history.replaceState({ path: url.href }, '', url.href);
+        }
+    })();
+
+    document.addEventListener('DOMContentLoaded', function () {
+        const activeBtn = document.querySelector('#resident-tabs .tab-btn.active');
+        if (activeBtn) switchResTab(activeBtn);
+    });
+
+    function generatePrintReport() {
+        const status = document.getElementById('statusFilter').value;
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        const search = document.getElementById('searchInput').value;
+        window.open(`print_report.php?status=${encodeURIComponent(status)}&startDate=${encodeURIComponent(startDate)}&endDate=${encodeURIComponent(endDate)}&search=${encodeURIComponent(search)}`, '_blank');
+    }
+
+    // ---------- Basura-Alert counter ----------
+    function updateCharCount() {
+        const textarea = document.getElementById('alertMsg');
+        const counter = document.getElementById('charCount');
+        if (textarea && counter) {
+            counter.innerText = textarea.value.length;
+            counter.style.color = textarea.value.length >= 250 ? '#dc2626' : 'var(--text-muted)';
+        }
+    }
+    if (document.getElementById('alertMsg')) { updateCharCount(); }
+
+    // ---------- Ask for confirmation before sending a broadcast ----------
+    let broadcastReturnFocus = null;
+
+    function closeBroadcastModal() {
+        const modal = document.getElementById('broadcastModal');
+        if (!modal || modal.style.display !== 'flex') return false;
+        modal.style.display = 'none';
+        if (broadcastReturnFocus && broadcastReturnFocus.focus) broadcastReturnFocus.focus();
+        return true;
+    }
+
+    (function () {
+        const form = document.getElementById('broadcastForm');
+        const modal = document.getElementById('broadcastModal');
+        const confirmBtn = document.getElementById('broadcastConfirmBtn');
+        if (!form || !modal || !confirmBtn) return;
+
+        function resetSendState() {
+            form.dataset.confirmed = '';
+            confirmBtn.disabled = false;
+            confirmBtn.innerHTML = '<i class="ti ti-send"></i> Send broadcast';
+        }
+
+        form.addEventListener('submit', function (e) {
+            if (form.dataset.confirmed === '1') return;              // second pass: really send it
+            const text = document.getElementById('alertMsg').value.trim();
+            if (text === '') return;                                 // empty: the server explains what is missing
+            e.preventDefault();
+            broadcastReturnFocus = document.activeElement;
+            document.getElementById('broadcastPreview').textContent = text;
+            document.getElementById('broadcastCount').textContent = text.length + ' / 250 characters';
+            resetSendState();
+            modal.style.display = 'flex';
+            document.getElementById('broadcastCancelBtn').focus();   // Cancel is the safe default
+        });
+
+        confirmBtn.addEventListener('click', function () {
+            if (form.dataset.confirmed === '1') return;              // ignore double clicks
+            form.dataset.confirmed = '1';
+            // a form sent by script does not include the button's name, and the server looks for it
+            if (!form.querySelector('input[name="send_basura_alert"]')) {
+                const flag = document.createElement('input');
+                flag.type = 'hidden'; flag.name = 'send_basura_alert'; flag.value = '1';
+                form.appendChild(flag);
+            }
+            confirmBtn.disabled = true;
+            confirmBtn.innerHTML = '<i class="ti ti-loader"></i> Sending...';
+            form.submit();
+        });
+
+        modal.addEventListener('click', function (e) { if (e.target === modal) closeBroadcastModal(); });
+
+        // coming back with the browser's Back button should not leave the dialog stuck on "Sending..."
+        window.addEventListener('pageshow', function (e) { if (e.persisted) { closeBroadcastModal(); resetSendState(); } });
+    })();
+
+    // ---------- Custom hotline rows ----------
+    document.getElementById('addHotlineBtn')?.addEventListener('click', function () {
+        const container = document.getElementById('customHotlinesContainer');
+        const row = document.createElement('div');
+        row.className = 'hotline-row';
+        row.innerHTML = `
+            <div><input type="text" name="custom_hotline_names[]" class="form-control" placeholder="e.g., Barangay Tanod" aria-label="Contact name"></div>
+            <div><input type="text" name="custom_hotline_numbers[]" class="form-control" placeholder="e.g., 09123456789" aria-label="Contact number"></div>
+            <button type="button" class="flat-btn danger remove-hotline" style="padding: 0 16px;" aria-label="Remove contact"><i class="ti ti-trash"></i></button>
+        `;
+        container.appendChild(row);
+        row.querySelector('input').focus();
+    });
+
+    document.getElementById('customHotlinesContainer')?.addEventListener('click', function (e) {
+        const removeBtn = e.target.closest('.remove-hotline');
+        if (removeBtn) removeBtn.closest('.hotline-row').remove();
+    });
+
+    <?php if ($view == 'dashboard'): ?>
+    document.addEventListener('DOMContentLoaded', function () {
+        const locations = <?php echo json_encode($map_data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+
+        // Default view: Brgy. Tanza, Estancia, Iloilo (used when there are no pins yet)
+        const map = L.map('masterMap').setView([11.439, 123.139], 15);
+
+        const roadmapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            maxZoom: 19,
+            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+        });
+
+        L.control.layers({ 'Roadmap': roadmapLayer, 'Satellite': satelliteLayer }).addTo(map);
+
+        // Teardrop map pins (inline SVG, no external images) in the same colours as the legend.
+        // The tip of the pin sits exactly on the report's location.
+        const PIN_SVG = '<svg class="map-pin %CLS%" width="30" height="42" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg>';
+        function pinIcon(status) {
+            return L.divIcon({
+                className: 'map-pin-wrap',
+                html: PIN_SVG.replace('%CLS%', status === 'Pending' ? 'pending' : 'cleaned'),
+                iconSize: [30, 42],
+                iconAnchor: [15, 41],
+                tooltipAnchor: [0, -38]
+            });
+        }
+
+        const points = [];
+        locations.forEach(function (loc) {
+            const lat = parseFloat(loc.latitude);
+            const lng = parseFloat(loc.longitude);
+            if (!isFinite(lat) || !isFinite(lng)) return;
+            points.push([lat, lng]);
+
+            const isPending = loc.status === 'Pending';
+            // Pending pin -> straight to the Resolve page. Cleaned pin -> Waste Reports with that row highlighted.
+            const target = isPending
+                ? 'resolve_report.php?id=' + encodeURIComponent(loc.report_id)
+                : 'admin_dashboard.php?view=reports&highlight=' + encodeURIComponent(loc.report_id);
+            const hint = isPending ? 'Click to resolve this report' : 'Click to view it in Waste Reports';
+            const dateStr = new Date(loc.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            const photo = loc.before_photo_path
+                ? `<img src="uploads/reports/${esc(loc.before_photo_path)}" alt="" style="width:100%; height:90px; object-fit:cover; border-radius:4px; margin-bottom:8px;">`
+                : '';
+            const card = `<div style="text-align:center; min-width:150px; padding:5px; font-family: 'Inter', sans-serif;">${photo}<div style="font-size:12px; color:${isPending ? '#B91C1C' : '#0369A1'}; font-weight:600;">${esc(loc.status)}</div><div style="font-size:11px; text-align:left; color:#687280; margin-top:4px;"><b>${esc(loc.full_name)}</b><br>${esc(dateStr)}</div><div style="font-size:11px; margin-top:6px; color:#0369A1; font-weight:600;">${hint}</div></div>`;
+
+            const marker = L.marker([lat, lng], { icon: pinIcon(loc.status), riseOnHover: true }).addTo(map);
+            marker.bindTooltip(card, { direction: 'top', opacity: 1 });
+            marker.on('click', function () { window.location.href = target; });
+            const markerEl = marker.getElement();
+            if (markerEl) markerEl.setAttribute('aria-label', (isPending ? 'Pending' : 'Cleaned') + ' report by ' + loc.full_name + '. ' + hint);
+        });
+
+        // Show every pin instead of only the default area
+        if (points.length > 0) {
+            map.fitBounds(points, { padding: [40, 40], maxZoom: 17 });
+        }
+        setTimeout(function () { map.invalidateSize(); }, 300);
+    });
+
+    // ---------- Reports Overview line chart: reported vs resolved (plain SVG, no extra library) ----------
+    (function () {
+        const holder = document.getElementById('reportsChart');
+        if (!holder) return;
+
+        const DATA = <?php echo json_encode($chart_data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+        const COPY = {
+            weekly:  { sub: 'Reports submitted and resolved per week',  now: 'this week',  before: 'last week' },
+            monthly: { sub: 'Reports submitted and resolved per month', now: 'this month', before: 'last month' }
+        };
+        const tip = document.getElementById('chartTip');
+        const H = 270, PAD = { top: 18, right: 18, bottom: 34, left: 38 };
+        let period = 'weekly';
+
+        // smooth line that never overshoots the data (monotone cubic)
+        function smoothPath(pts) {
+            const n = pts.length;
+            if (n < 2) return 'M' + pts[0].x + ',' + pts[0].y;
+            const dx = [], dy = [], m = [];
+            for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1].x - pts[i].x; dy[i] = pts[i + 1].y - pts[i].y; m[i] = dy[i] / dx[i]; }
+            const t = [m[0]];
+            for (let i = 1; i < n - 1; i++) t[i] = (m[i - 1] * m[i] <= 0) ? 0 : (m[i - 1] + m[i]) / 2;
+            t[n - 1] = m[n - 2];
+            for (let i = 0; i < n - 1; i++) {
+                if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+                const a = t[i] / m[i], b = t[i + 1] / m[i], s = a * a + b * b;
+                if (s > 9) { const k = 3 / Math.sqrt(s); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+            }
+            let d = 'M' + pts[0].x + ',' + pts[0].y;
+            for (let i = 0; i < n - 1; i++) {
+                const h = dx[i] / 3;
+                d += ' C' + (pts[i].x + h) + ',' + (pts[i].y + t[i] * h) + ' ' + (pts[i + 1].x - h) + ',' + (pts[i + 1].y - t[i + 1] * h) + ' ' + pts[i + 1].x + ',' + pts[i + 1].y;
+            }
+            return d;
+        }
+
+        function plural(n) { return n + (n === 1 ? ' report' : ' reports'); }
+
+        function chip(kind, word, now, before, whenBefore) {
+            const diff = now - before;
+            let delta;
+            if (diff === 0) delta = '<span class="chart-delta" title="Same as ' + whenBefore + '"><i class="ti ti-minus"></i></span>';
+            else delta = '<span class="chart-delta ' + kind + (diff > 0 ? ' up' : '') + '" title="' + Math.abs(diff) + (diff > 0 ? ' more' : ' fewer') + ' than ' + whenBefore + '"><i class="ti ' + (diff > 0 ? 'ti-trending-up' : 'ti-trending-down') + '"></i>' + Math.abs(diff) + '</span>';
+            return '<span class="chart-chip"><i class="chart-key ' + kind + '"></i><strong>' + now + '</strong> ' + word + delta + '</span>';
+        }
+
+        function updateSummary(rows) {
+            const cur = rows[rows.length - 1], prev = rows[rows.length - 2], copy = COPY[period];
+            document.getElementById('chartSummary').innerHTML =
+                chip('reported', 'reported', cur.count, prev.count, copy.before) +
+                chip('resolved', 'resolved', cur.resolved, prev.resolved, copy.before) +
+                '<span class="chart-when">' + copy.now + '</span>';
+        }
+
+        function render() {
+            const rows = DATA[period];
+            const W = Math.max(holder.clientWidth - 40, 300);
+            const plotW = W - PAD.left - PAD.right, plotH = H - PAD.top - PAD.bottom;
+            const max = Math.max.apply(null, rows.map(function (r) { return Math.max(r.count, r.resolved); }));
+            const yMax = Math.max(4, Math.ceil(max / 4) * 4);
+            const x = function (i) { return PAD.left + (rows.length === 1 ? plotW / 2 : (plotW * i) / (rows.length - 1)); };
+            const y = function (v) { return PAD.top + plotH - (v / yMax) * plotH; };
+            const reported = rows.map(function (r, i) { return { x: x(i), y: y(r.count) }; });
+            const resolved = rows.map(function (r, i) { return { x: x(i), y: y(r.resolved) }; });
+
+            let svg = '<defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0284C7" stop-opacity="0.18"/><stop offset="100%" stop-color="#0284C7" stop-opacity="0"/></linearGradient></defs>';
+
+            for (let g = 0; g <= 4; g++) {                                   // grid + y labels
+                const val = (yMax / 4) * g, gy = y(val);
+                svg += '<line class="' + (g === 0 ? 'chart-axis' : 'chart-grid') + '" x1="' + PAD.left + '" x2="' + (W - PAD.right) + '" y1="' + gy + '" y2="' + gy + '"/>';
+                svg += '<text x="' + (PAD.left - 10) + '" y="' + (gy + 4) + '" text-anchor="end">' + val + '</text>';
+            }
+
+            const step = Math.max(1, Math.ceil(rows.length / Math.max(2, Math.floor(plotW / 62))));
+            rows.forEach(function (r, i) {                                   // x labels (skip some when narrow)
+                if ((rows.length - 1 - i) % step !== 0) return;
+                svg += '<text x="' + x(i) + '" y="' + (H - 10) + '" text-anchor="middle">' + r.label + '</text>';
+            });
+
+            const total = rows.reduce(function (sum, r) { return sum + r.count + r.resolved; }, 0);
+            if (total === 0) {
+                svg += '<text class="chart-empty" x="' + (W / 2) + '" y="' + (PAD.top + plotH / 2) + '">No reports in this period yet</text>';
+            } else {
+                const lineR = smoothPath(reported);
+                svg += '<path class="chart-area" d="' + lineR + ' L' + reported[reported.length - 1].x + ',' + y(0) + ' L' + reported[0].x + ',' + y(0) + ' Z" fill="url(#chartFill)"/>';
+                svg += '<path class="chart-line reported" d="' + lineR + '"/>';
+                svg += '<path class="chart-line resolved" d="' + smoothPath(resolved) + '"/>';
+            }
+
+            svg += '<line class="chart-guide" id="chartGuide" x1="0" x2="0" y1="' + PAD.top + '" y2="' + y(0) + '"/>';
+            rows.forEach(function (r, i) {                                   // dots: reported first, resolved on top
+                const last = i === rows.length - 1 ? ' latest' : '';
+                svg += '<circle class="chart-dot reported' + last + '" data-i="' + i + '" cx="' + reported[i].x + '" cy="' + reported[i].y + '" r="4"/>';
+                svg += '<circle class="chart-dot resolved' + last + '" data-i="' + i + '" cx="' + resolved[i].x + '" cy="' + resolved[i].y + '" r="4"/>';
+            });
+            const colW = rows.length === 1 ? plotW : plotW / (rows.length - 1);
+            rows.forEach(function (r, i) {                                   // one focusable hover/keyboard area per period
+                const label = r.full + ': ' + plural(r.count) + ' submitted, ' + plural(r.resolved) + ' resolved';
+                svg += '<rect class="chart-hit" tabindex="0" data-i="' + i + '" x="' + (x(i) - colW / 2) + '" y="' + PAD.top + '" width="' + colW + '" height="' + plotH + '" aria-label="' + label + '"><title>' + label + '</title></rect>';
+            });
+
+            holder.querySelectorAll('svg').forEach(function (old) { old.remove(); });
+            holder.insertAdjacentHTML('afterbegin', '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="group" aria-label="Line chart of ' + COPY[period].sub.toLowerCase() + '">' + svg + '</svg>');
+
+            holder.querySelectorAll('.chart-line').forEach(function (lineEl) {   // draw-in animation
+                if (lineEl.getTotalLength) {
+                    const len = Math.ceil(lineEl.getTotalLength());
+                    lineEl.style.setProperty('--len', len);
+                    lineEl.style.strokeDasharray = len;
+                }
+            });
+
+            const svgEl = holder.querySelector('svg');
+            const guide = svgEl.querySelector('#chartGuide');
+            function clearDots() { svgEl.querySelectorAll('.chart-dot.on').forEach(function (d) { d.classList.remove('on'); }); }
+            function showTip(i) {
+                const r = rows[i], scale = svgEl.clientWidth / W || 1;
+                tip.innerHTML = '<div class="tip-date">' + r.full + '</div>' +
+                    '<div class="tip-row"><i class="chart-key reported"></i> Reported <strong>' + r.count + '</strong></div>' +
+                    '<div class="tip-row"><i class="chart-key resolved"></i> Resolved <strong>' + r.resolved + '</strong></div>';
+                tip.hidden = false;
+                tip.style.left = (20 + x(i) * scale) + 'px';
+                tip.style.top = (8 + Math.min(reported[i].y, resolved[i].y) * scale - 14) + 'px';
+                guide.setAttribute('x1', x(i)); guide.setAttribute('x2', x(i));
+                guide.classList.add('show');
+                clearDots();
+                svgEl.querySelectorAll('.chart-dot[data-i="' + i + '"]').forEach(function (d) { d.classList.add('on'); });
+            }
+            function hideTip() { tip.hidden = true; guide.classList.remove('show'); clearDots(); }
+
+            svgEl.addEventListener('pointermove', function (e) {              // nearest period, anywhere over the chart
+                const box = svgEl.getBoundingClientRect(), px = (e.clientX - box.left) * (W / box.width);
+                let best = 0;
+                reported.forEach(function (p, i) { if (Math.abs(p.x - px) < Math.abs(reported[best].x - px)) best = i; });
+                showTip(best);
+            });
+            svgEl.addEventListener('pointerleave', hideTip);
+            svgEl.querySelectorAll('.chart-hit').forEach(function (hit) {
+                hit.addEventListener('focus', function () { showTip(+hit.dataset.i); });
+                hit.addEventListener('blur', hideTip);
+            });
+
+            updateSummary(rows);
+            document.getElementById('chartSub').textContent = COPY[period].sub;
+        }
+
+        document.querySelectorAll('.chart-toggle-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                if (btn.dataset.period === period) return;
+                period = btn.dataset.period;
+                document.querySelectorAll('.chart-toggle-btn').forEach(function (b) {
+                    const on = b === btn;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                });
+                tip.hidden = true;
+                render();
+            });
+        });
+
+        render();
+        let resizeFrame = null, lastWidth = holder.clientWidth;
+        window.addEventListener('resize', function () {
+            if (holder.clientWidth === lastWidth) return;
+            lastWidth = holder.clientWidth;
+            cancelAnimationFrame(resizeFrame);
+            resizeFrame = requestAnimationFrame(render);
+        });
+    })();
+    <?php endif; ?>
 </script>
+
 </body>
 </html>
