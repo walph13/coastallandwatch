@@ -323,6 +323,65 @@ if ($view === 'dashboard') {
     if ($map_query) {
         while ($row = $map_query->fetch_assoc()) { $map_data[] = $row; }
     }
+
+    // ---- Reports submitted AND resolved per week / per month for the line chart (last 12 of each) ----
+    $chart_data = ['weekly' => [], 'monthly' => [], 'estimated' => false];
+    $first_week = new DateTime('monday this week');
+    $first_week->setTime(0, 0)->modify('-11 weeks');
+    $first_month = new DateTime('first day of this month');
+    $first_month->setTime(0, 0)->modify('-11 months');
+
+    // When was each report cleaned? Databases with the cleaned_at column know exactly;
+    // without it, a cleaned report is counted in the period it was submitted (an estimate).
+    $col = $conn->query("SHOW COLUMNS FROM waste_reports LIKE 'cleaned_at'");
+    $has_cleaned_at = ($col && $col->num_rows > 0);
+    $chart_data['estimated'] = !$has_cleaned_at;
+    $cleaned_date = $has_cleaned_at ? 'COALESCE(cleaned_at, created_at)' : 'created_at';
+
+    $count_by = function (string $kind, string $date_expr, bool $only_cleaned, string $from) use ($conn): array {
+        $bucket = ($kind === 'week')
+            ? "DATE_SUB(DATE($date_expr), INTERVAL WEEKDAY($date_expr) DAY)"
+            : "DATE_FORMAT($date_expr, '%Y-%m')";
+        $where = ($only_cleaned ? "status = 'Cleaned' AND " : '') . "$date_expr >= ?";
+        $counts = [];
+        $stmt = $conn->prepare("SELECT $bucket AS bucket, COUNT(*) AS c FROM waste_reports WHERE $where GROUP BY bucket");
+        if ($stmt) {
+            $stmt->bind_param("s", $from);
+            $stmt->execute();
+            $res = $stmt->get_result();
+            while ($r = $res->fetch_assoc()) { $counts[$r['bucket']] = (int)$r['c']; }
+            $stmt->close();
+        }
+        return $counts;
+    };
+
+    $from_week  = $first_week->format('Y-m-d');
+    $from_month = $first_month->format('Y-m-d');
+    $reported_w = $count_by('week',  'created_at',  false, $from_week);
+    $resolved_w = $count_by('week',  $cleaned_date, true,  $from_week);
+    $reported_m = $count_by('month', 'created_at',  false, $from_month);
+    $resolved_m = $count_by('month', $cleaned_date, true,  $from_month);
+
+    for ($i = 0; $i < 12; $i++) {
+        $start = (clone $first_week)->modify("+$i weeks");
+        $end   = (clone $start)->modify('+6 days');
+        $key   = $start->format('Y-m-d');
+        $chart_data['weekly'][] = [
+            'label'    => $start->format('M j'),
+            'full'     => $start->format('M j') . ' – ' . $end->format('M j, Y'),
+            'count'    => $reported_w[$key] ?? 0,
+            'resolved' => $resolved_w[$key] ?? 0,
+        ];
+
+        $month = (clone $first_month)->modify("+$i months");
+        $key   = $month->format('Y-m');
+        $chart_data['monthly'][] = [
+            'label'    => ($i === 0 || $month->format('n') === '1') ? $month->format("M 'y") : $month->format('M'),
+            'full'     => $month->format('F Y'),
+            'count'    => $reported_m[$key] ?? 0,
+            'resolved' => $resolved_m[$key] ?? 0,
+        ];
+    }
 }
 ?>
 <!DOCTYPE html>
@@ -391,24 +450,21 @@ if ($view === 'dashboard') {
     .sidebar-menu { padding: 10px 16px; flex: 1; overflow-y: auto; }
     .menu-label { font-size: 11px; color: var(--sidebar-header-text); font-weight: 600; padding: 16px 16px 8px; text-transform: uppercase; letter-spacing: 0.5px; }
     
-    .nav-link { display: flex; align-items: center; gap: 12px; padding: 12px 16px; padding-left: 12px; color: var(--sidebar-text); text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, transform 0.2s ease; margin-bottom: 4px; border-left: 4px solid transparent; will-change: transform; }
+    .nav-link { display: flex; align-items: center; gap: 12px; padding: 12px 16px; padding-left: 12px; color: var(--sidebar-text); text-decoration: none; border-radius: 6px; font-size: 14px; font-weight: 500; transition: 0.2s; margin-bottom: 4px; border-left: 4px solid transparent; }
     .nav-link i { font-size: 20px; display: inline-block; width: 20px; text-align: center; color: var(--sidebar-text); }
-    .nav-link:hover { background: var(--sidebar-hover); color: var(--sidebar-text-active); transform: translateX(3px); }
+    .nav-link:hover { background: var(--sidebar-hover); color: var(--sidebar-text-active); }
     
     /* ACTIVE TAB COLORS */
     .nav-link.active { background: var(--sidebar-hover); color: var(--sidebar-text-active); border-left: 4px solid var(--active-tab-blue); border-radius: 4px 8px 8px 4px; font-weight: 600; }
     .nav-link.active i { color: var(--active-tab-blue); }
-    .nav-link.active:hover { transform: none; }
     
     .user-footer { padding: 20px; border-top: 1px solid #2B3548; background: var(--sidebar-footer-bg); display: flex; align-items: center; justify-content: space-between; }
     .user-info { display: flex; align-items: center; gap: 12px; }
     .user-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--primary-dark); color: #fff; display: flex; justify-content: center; align-items: center; font-weight: 600; font-size: 14px; overflow: hidden; }
     .user-text h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--sidebar-text-active); }
     .user-text p { margin: 0; font-size: 11px; color: var(--sidebar-header-text); }
-    .user-footer a { color: var(--sidebar-text); transition: color 0.2s ease; }
+    .user-footer a { color: var(--sidebar-text); transition: 0.2s; }
     .user-footer a:hover { color: var(--alert-red); }
-    .user-footer a i { display: inline-block; transition: transform 0.2s ease; }
-    .user-footer a:hover i { transform: scale(1.15); }
 
     .main-wrapper { flex: 1; min-width: 0; margin-left: 260px; display: flex; flex-direction: column; }
     
@@ -419,9 +475,8 @@ if ($view === 'dashboard') {
     .topbar-right { display: flex; align-items: center; gap: 20px; flex-shrink: 0; }
     .topbar-icons { display: flex; gap: 16px; color: #ffffff; font-size: 20px; align-items: center; }
     
-    .notification-btn { border: 0; color: #fff; padding: 0; font: inherit; position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: transform 0.18s ease, background-color 0.18s ease, color 0.18s ease; background: rgba(0, 0, 0, 0.2); will-change: transform; }
-    .notification-btn:hover { background: rgba(0, 0, 0, 0.3); color: var(--sidebar-text); transform: scale(1.1); }
-    .notification-btn:active { transform: scale(0.95); }
+    .notification-btn { border: 0; color: #fff; padding: 0; font: inherit; position: relative; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: all 0.2s ease; background: rgba(0, 0, 0, 0.2); }
+    .notification-btn:hover { background: rgba(0, 0, 0, 0.3); color: var(--sidebar-text); }
     .notification-badge-count { position: absolute; top: 4px; right: 4px; background: var(--alert-red); color: white; font-size: 10px; font-weight: bold; width: 16px; height: 16px; display: none; align-items: center; justify-content: center; border-radius: 50%; border: 2px solid var(--sidebar-bg); }
     
     .notification-dropdown { position: absolute; top: 60px; right: 32px; width: 320px; background: var(--bg-surface); border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1); border: 1px solid var(--border-color); z-index: 100; display: none; flex-direction: column; overflow: hidden; color: var(--text-main); }
@@ -429,7 +484,7 @@ if ($view === 'dashboard') {
     .notif-header { padding: 16px; border-bottom: 1px solid var(--border-color); display: flex; justify-content: space-between; align-items: center; background: #f9fafb; }
     .notif-header h3 { margin: 0; font-size: 14px; font-weight: 600; }
     .notif-list { max-height: 300px; overflow-y: auto; }
-    .notif-item { padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-decoration: none; display: block; transition: background-color 0.2s ease; }
+    .notif-item { padding: 12px 16px; border-bottom: 1px solid var(--border-color); text-decoration: none; display: block; transition: 0.2s; }
     .notif-item:hover { background: #f9fafb; }
     .notif-item .title { font-size: 13px; font-weight: 600; color: var(--primary); margin-bottom: 4px; }
     .notif-item .desc { font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 4px; }
@@ -446,9 +501,8 @@ if ($view === 'dashboard') {
     .welcome-banner { background: var(--banner-bg); border-radius: var(--radius-card); padding: 32px; color: white; display: flex; justify-content: space-between; align-items: center; margin-bottom: 24px; box-shadow: var(--shadow-md); }
     .welcome-text h1 { margin: 0 0 8px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; }
     .welcome-text p { margin: 0; font-size: 14px; color: #ffffff; }
-    .welcome-btn { background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid rgba(255, 255, 255, 0.3); padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease; display: flex; align-items: center; gap: 8px; text-decoration: none; will-change: transform; }
-    .welcome-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.5); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(0, 0, 0, 0.15); }
-    .welcome-btn:active { transform: translateY(0); box-shadow: none; }
+    .welcome-btn { background: rgba(255, 255, 255, 0.1); color: white; border: 1px solid rgba(255, 255, 255, 0.3); padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; text-decoration: none; }
+    .welcome-btn:hover { background: rgba(255, 255, 255, 0.2); border-color: rgba(255, 255, 255, 0.4); transform: translateY(-1px); }
 
     .flat-card { background: var(--bg-surface); border: 1px solid #f3f4f6; border-radius: var(--radius-card); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
     .card-title { font-size: 16px; font-weight: 600; color: var(--text-main); margin: 0 0 20px 0; display: flex; justify-content: space-between; align-items: center; }
@@ -472,18 +526,15 @@ if ($view === 'dashboard') {
     .flat-input { border: 1px solid var(--border-color); border-radius: 8px; padding: 10px 14px; font-size: 14px; outline: none; transition: 0.2s; font-family: inherit; color: var(--text-main); background: var(--bg-body); }
     .flat-input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px var(--primary-light); background: #fff; }
     
-    .flat-btn { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease, border-color 0.18s ease, color 0.18s ease; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; will-change: transform; }
-    .flat-btn:hover:not(:disabled) { background: var(--bg-body); color: var(--text-main); transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08); }
-    .flat-btn:active:not(:disabled) { transform: translateY(0); box-shadow: none; }
+    .flat-btn { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+    .flat-btn:hover { background: var(--bg-body); color: var(--text-main); }
     .flat-btn.primary { background: var(--primary-strong); color: #fff; border-color: var(--primary-strong); }
-    .flat-btn.primary:hover:not(:disabled) { background: var(--primary-strong-hover); border-color: var(--primary-strong-hover); transform: translateY(-2px); box-shadow: 0 6px 16px rgba(14, 165, 233, 0.35); }
-    .flat-btn.primary:active:not(:disabled) { transform: translateY(0); box-shadow: 0 2px 6px rgba(14, 165, 233, 0.25); }
+    .flat-btn.primary:hover { background: var(--primary-strong-hover); border-color: var(--primary-strong-hover); }
     .flat-btn.danger { color: #dc2626; border-color: #fca5a5; background: #fef2f2; }
-    .flat-btn.danger:hover:not(:disabled) { background: #fee2e2; border-color: #f87171; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(220, 38, 38, 0.2); }
+    .flat-btn.danger:hover { background: #fee2e2; }
     .flat-btn.danger-solid { background: #dc2626; color: #fff; border-color: #dc2626; }
-    .flat-btn.danger-solid:hover:not(:disabled) { background: #b91c1c; border-color: #b91c1c; color: #fff; transform: translateY(-2px); box-shadow: 0 6px 16px rgba(220, 38, 38, 0.4); }
-    .flat-btn.danger-solid:active:not(:disabled) { transform: translateY(0); box-shadow: 0 2px 6px rgba(220, 38, 38, 0.3); }
-    .flat-btn:disabled { opacity: 0.6; cursor: not-allowed; transform: none !important; box-shadow: none !important; }
+    .flat-btn.danger-solid:hover { background: #b91c1c; border-color: #b91c1c; color: #fff; }
+    .flat-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .row-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
     /* Delete confirmation box */
@@ -506,6 +557,13 @@ if ($view === 'dashboard') {
     .flat-table td { padding: 16px; border-bottom: 1px solid var(--border-color); font-size: 14px; vertical-align: middle; color: var(--text-main); transition: 0.2s; }
     .flat-table tr:last-child td { border-bottom: none; }
     .flat-table tr:hover td { background-color: #f9fafb; }
+    /* Report opened from a map pin: pulses three times, then stays softly highlighted until the next click */
+    .flat-table tr.row-highlight td { background-color: #e0f2fe; animation: rowPulse 1s ease 3; }
+    .flat-table tr.row-highlight td:first-child { box-shadow: inset 4px 0 0 var(--primary-strong); }
+    .flat-table tr.row-highlight:hover td { background-color: #e0f2fe; }
+    @keyframes rowPulse { 0%, 100% { background-color: #e0f2fe; } 50% { background-color: #bae6fd; } }
+    /* stop the zoom +/- from turning into a blue text selection when clicked quickly */
+    .leaflet-control-container { -webkit-user-select: none; user-select: none; }
 
     .status-badge { padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 6px; }
     .status-badge.pending { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
@@ -515,19 +573,17 @@ if ($view === 'dashboard') {
     .reporter-cell { display: flex; align-items: center; gap: 12px; }
     .reporter-avatar { width: 32px; height: 32px; border-radius: 50%; background: var(--primary-light); color: var(--avatar-text-dark); display: flex; align-items: center; justify-content: center; font-weight: 600; font-size: 13px; }
     
-    .photo-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease; margin-right: 6px; }
-    .photo-link:hover { transform: translateY(-1px); box-shadow: 0 3px 8px rgba(0, 0, 0, 0.12); }
+    .photo-link { display: inline-flex; align-items: center; gap: 4px; text-decoration: none; font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 6px; transition: 0.2s; margin-right: 6px; }
     .photo-link.before { background: #fef2f2; color: var(--alert-red); border: 1px solid #fecaca; }
     .photo-link.before:hover { background: #fee2e2; }
     .photo-link.after { background: var(--primary-light); color: var(--avatar-text-dark); border: 1px solid #bae6fd; }
     .photo-link.after:hover { background: #bae6fd; }
 
     .flat-tabs { display: flex; flex-wrap: wrap; gap: 8px; }
-    .tab-btn { background: transparent; border: 1px solid transparent; font-size: 14px; font-weight: 500; color: var(--text-muted); padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: transform 0.18s ease, background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease; display: flex; align-items: center; gap: 8px; will-change: transform; }
+    .tab-btn { background: transparent; border: 1px solid transparent; font-size: 14px; font-weight: 500; color: var(--text-muted); padding: 8px 16px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; display: flex; align-items: center; gap: 8px; }
     .tab-btn i { font-size: 18px; }
-    .tab-btn:hover { color: var(--text-main); background: var(--bg-body); transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.05); }
-    .tab-btn:active { transform: translateY(0); }
-    .tab-btn.active { background: var(--bg-surface); color: var(--primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); border: 1px solid var(--border-color); }
+    .tab-btn:hover { color: var(--text-main); background: var(--bg-body); }
+    .tab-btn.active { background: var(--bg-surface); color: var(--primary); font-weight: 600; box-shadow: 0 1px 3px rgba(0,0,0,0.1); border: 1px solid var(--border-color); }
 
     .form-group { margin-bottom: 24px; }
     .form-label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: var(--text-main); }
@@ -554,8 +610,8 @@ if ($view === 'dashboard') {
     /* MODAL STYLES */
     .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: none; align-items: center; justify-content: center; z-index: 1000; padding: 20px; }
     .modal-content { background: #fff; border-radius: var(--radius-card); width: 100%; max-width: 500px; padding: 32px; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); position: relative; max-height: 90vh; overflow-y: auto; }
-    .modal-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); transition: transform 0.2s ease, color 0.2s ease; }
-    .modal-close:hover { color: #dc2626; transform: rotate(90deg); }
+    .modal-close { position: absolute; top: 20px; right: 20px; background: none; border: none; font-size: 24px; cursor: pointer; color: var(--text-muted); transition: 0.2s; }
+    .modal-close:hover { color: #dc2626; }
     .modal-title { margin: 0 0 20px 0; font-size: 20px; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
     .modal-table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
     .modal-table td { padding: 12px 8px; border-bottom: 1px solid var(--border-color); font-size: 14px; }
@@ -604,17 +660,61 @@ if ($view === 'dashboard') {
     .legend-pin.pending path { fill: var(--alert-red); }
     .legend-pin.cleaned path { fill: var(--primary); }
 
+    /* ---------- Reports Overview (line chart) ---------- */
+    .chart-card { padding: 0; overflow: hidden; margin-bottom: 0; --chart-reported: var(--primary-strong); --chart-resolved: #10B981; }
+    .chart-head { padding: 24px 24px 8px; margin: 0; flex-wrap: wrap; gap: 16px; }
+    .chart-title { font-size: 16px; color: var(--text-main); }
+    .chart-sub { font-size: 13px; color: var(--text-muted); font-weight: 400; margin-top: 4px; }
+    .chart-controls { display: flex; align-items: center; gap: 20px; flex-wrap: wrap; }
+    .chart-summary { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; font-size: 13px; font-weight: 500; color: var(--text-muted); }
+    .chart-chip { display: inline-flex; align-items: center; gap: 6px; }
+    .chart-chip strong { font-size: 20px; font-weight: 700; color: var(--text-main); }
+    .chart-key { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
+    .chart-key.reported { background: var(--chart-reported); }
+    .chart-key.resolved { background: var(--chart-resolved); }
+    .chart-delta { display: inline-flex; align-items: center; gap: 2px; font-size: 12px; font-weight: 600; color: var(--text-muted); }
+    .chart-delta.up { color: var(--chart-reported); }
+    .chart-delta.resolved.up { color: #059669; }
+    .chart-when { color: var(--text-muted); font-weight: 500; }
+    .chart-toggle { display: inline-flex; background: var(--bg-body); border-radius: 8px; padding: 3px; gap: 2px; }
+    .chart-toggle-btn { border: 0; background: transparent; font-family: inherit; font-size: 13px; font-weight: 500; color: var(--text-muted); padding: 7px 16px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease; }
+    .chart-toggle-btn:hover { color: var(--text-main); }
+    .chart-toggle-btn.active { background: var(--bg-surface); color: var(--primary-strong); font-weight: 600; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+    .chart-body { position: relative; padding: 8px 20px 20px; }
+    .chart-note { padding: 0 24px 18px; font-size: 12px; color: var(--text-muted); display: flex; align-items: center; gap: 6px; }
+    .chart-svg { display: block; width: 100%; height: auto; overflow: visible; }
+    .chart-svg text { font-family: inherit; font-size: 11px; fill: var(--text-muted); }
+    .chart-svg .chart-grid { stroke: #eef0f3; stroke-width: 1; }
+    .chart-svg .chart-axis { stroke: #d9dde3; stroke-width: 1; }
+    .chart-svg .chart-line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; animation: chartDraw 0.9s ease both; }
+    .chart-svg .chart-line.reported { stroke: var(--chart-reported); }
+    .chart-svg .chart-line.resolved { stroke: var(--chart-resolved); }
+    .chart-svg .chart-area { animation: chartFade 0.9s ease both; }
+    .chart-svg .chart-dot { fill: #fff; stroke-width: 2; transition: r 0.15s ease; pointer-events: none; }
+    .chart-svg .chart-dot.reported { stroke: var(--chart-reported); }
+    .chart-svg .chart-dot.resolved { stroke: var(--chart-resolved); }
+    .chart-svg .chart-dot.reported.latest { fill: var(--chart-reported); }
+    .chart-svg .chart-dot.resolved.latest { fill: var(--chart-resolved); }
+    .chart-svg .chart-dot.on { r: 6; }
+    .chart-svg .chart-hit { fill: transparent; outline: none; cursor: crosshair; }
+    .chart-svg .chart-hit:focus { fill: rgba(2, 132, 199, 0.07); }
+    .chart-svg .chart-guide { stroke: #94a3b8; stroke-width: 1; stroke-dasharray: 4 4; opacity: 0; transition: opacity 0.15s; pointer-events: none; }
+    .chart-svg .chart-guide.show { opacity: 0.8; }
+    .chart-svg .chart-empty { font-size: 14px; font-weight: 500; text-anchor: middle; }
+    .chart-tip { position: absolute; z-index: 5; pointer-events: none; background: var(--text-main); color: #fff; border-radius: 8px; padding: 9px 12px; font-size: 12px; line-height: 1.5; box-shadow: 0 6px 16px rgba(15, 23, 42, 0.25); transform: translate(-50%, -100%); white-space: nowrap; }
+    .chart-tip .tip-date { color: #cbd5e1; margin-bottom: 4px; }
+    .chart-tip .tip-row { display: flex; align-items: center; gap: 6px; }
+    .chart-tip .tip-row strong { margin-left: auto; padding-left: 14px; font-size: 14px; }
+    @keyframes chartDraw { from { stroke-dashoffset: var(--len, 1000); } to { stroke-dashoffset: 0; } }
+    @keyframes chartFade { from { opacity: 0; } to { opacity: 1; } }
+
     /* ---------- Keyboard focus + reduced motion ---------- */
     :focus-visible { outline: 2px solid var(--primary-strong); outline-offset: 2px; }
     .nav-link:focus-visible, .user-footer a:focus-visible, .notification-btn:focus-visible { outline-color: #ffffff; }
 
     @media (prefers-reduced-motion: reduce) {
         * { transition: none !important; animation: none !important; }
-        .stat-box:hover, .welcome-btn:hover, .flat-btn:hover,
-        .flat-btn.primary:hover, .flat-btn.danger:hover,
-        .flat-btn.danger-solid:hover, .tab-btn:hover, .nav-link:hover,
-        .notification-btn:hover, .notification-btn:active, .modal-close:hover,
-        .photo-link:hover, .user-footer a:hover i { transform: none; }
+        .stat-box:hover, .welcome-btn:hover { transform: none; }
     }
 
     /* ---------- Responsive ---------- */
@@ -634,7 +734,6 @@ if ($view === 'dashboard') {
         .workspace-text, .menu-label, .user-text { display: none; }
         .sidebar-menu { padding: 10px 8px; }
         .nav-link { justify-content: center; padding: 12px 0; border-left-width: 0; }
-        .nav-link:hover { transform: none; }
         .nav-link.active { border-left-width: 0; box-shadow: inset 3px 0 0 var(--active-tab-blue); }
         .nav-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
         .user-footer { flex-direction: column; gap: 12px; padding: 12px 8px; }
@@ -878,7 +977,46 @@ if ($view === 'dashboard') {
                 </div>
             </div>
 
+            <div class="flat-card chart-card" id="reportsChartCard">
+                <div class="card-title chart-head">
+                    <div>
+                        <div class="chart-title">Reports Overview</div>
+                        <div class="chart-sub" id="chartSub">Reports submitted and resolved per week</div>
+                    </div>
+                    <div class="chart-controls">
+                        <div class="chart-summary" id="chartSummary" aria-live="polite"></div>
+                        <div class="chart-toggle" role="group" aria-label="Chart period">
+                            <button type="button" class="chart-toggle-btn active" data-period="weekly" aria-pressed="true">Weekly</button>
+                            <button type="button" class="chart-toggle-btn" data-period="monthly" aria-pressed="false">Monthly</button>
+                        </div>
+                    </div>
+                </div>
+                <div class="chart-body" id="reportsChart">
+                    <div class="chart-tip" id="chartTip" hidden></div>
+    
+                <?php if (!empty($chart_data['estimated'])): ?>
+                <div class="chart-note"><i class="ti ti-info-circle"></i> Resolved reports are counted in the period they were submitted until cleaned dates are recorded.</div>
+                <?php endif; ?>
+            </div>
+            </div>
+
             <?php elseif ($view == 'reports'): ?>
+            <?php
+            // ?highlight=ID comes from clicking a Cleaned pin on the dashboard map
+            $highlight_id = isset($_GET['highlight']) ? (int)$_GET['highlight'] : 0;
+            if ($highlight_id > 0) {
+                $hl_stmt = $conn->prepare("SELECT COUNT(*) FROM waste_reports WHERE report_id = ?");
+                $hl_stmt->bind_param("i", $highlight_id);
+                $hl_stmt->execute();
+                $hl_stmt->bind_result($hl_count);
+                $hl_stmt->fetch();
+                $hl_stmt->close();
+                if ((int)$hl_count === 0) { $highlight_id = -1; }   // asked for a report that no longer exists
+            }
+            ?>
+            <?php if ($highlight_id === -1): ?>
+                <div class="notice warn" role="status"><i class="ti ti-info-circle"></i> That report no longer exists.</div>
+            <?php endif; ?>
             <?php if (isset($_GET['resolved'])): ?>
                 <div class="notice success" role="status"><i class="ti ti-circle-check"></i> Report #<?php echo (int)$_GET['resolved']; ?> was marked as Cleaned.</div>
             <?php endif; ?>
@@ -923,7 +1061,8 @@ if ($view === 'dashboard') {
                                 while($row = $reports_query->fetch_assoc()) {
                                     $raw_date = date('Y-m-d', strtotime($row['created_at']));
                                     $initial = strtoupper(substr($row['full_name'], 0, 1));
-                                    echo "<tr class='report-row' data-status='" . h($row['status']) . "' data-date='" . h($raw_date) . "'>";
+                                    $is_hl = ($highlight_id > 0 && (int)$row['report_id'] === $highlight_id);
+                                    echo "<tr id='report-" . (int)$row['report_id'] . "' class='report-row" . ($is_hl ? " row-highlight" : "") . "' data-status='" . h($row['status']) . "' data-date='" . h($raw_date) . "'" . ($is_hl ? " aria-current='true'" : "") . ">";
                                     echo "<td><div class='reporter-cell'><div class='reporter-avatar'>{$initial}</div><span style='font-weight: 600;'>" . htmlspecialchars($row['full_name']) . "</span></div></td>";
                                     echo "<td style='color: var(--text-muted); font-weight: 500; white-space: nowrap;'>" . date("M d, Y", strtotime($row['created_at'])) . "<div style='font-size: 12px; font-weight: 500; margin-top: 2px; color: var(--text-muted);'><i class='ti ti-clock' style='font-size: 13px; vertical-align: -2px;'></i> " . date("g:i A", strtotime($row['created_at'])) . "</div></td>";
                                     echo "<td class='desc-cell'>" . h($row['description']) . "</td>";
@@ -1684,6 +1823,25 @@ if ($view === 'dashboard') {
 
     document.getElementById('searchInput')?.addEventListener('input', filterTableDropdown);
 
+    // ---------- Report opened from a map pin: scroll to it, then clear the highlight on the next click ----------
+    (function () {
+        const row = document.querySelector('.report-row.row-highlight');
+        if (!row) return;
+        const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+        row.scrollIntoView({ block: 'center', behavior: calm ? 'auto' : 'smooth' });
+
+        const url = new URL(window.location.href);
+        if (url.searchParams.has('highlight') && window.history.replaceState) {   // a refresh should not highlight again
+            url.searchParams.delete('highlight');
+            window.history.replaceState({ path: url.href }, '', url.href);
+        }
+        function clear() { row.classList.remove('row-highlight'); row.removeAttribute('aria-current'); }
+        setTimeout(function () {
+            document.addEventListener('click', clear, { once: true });
+            document.addEventListener('keydown', clear, { once: true });
+        }, 400);
+    })();
+
     // ---------- Resident tabs ----------
     function switchResTab(btn) {
         const target = btn.getAttribute('data-status');
@@ -1864,13 +2022,22 @@ if ($view === 'dashboard') {
             points.push([lat, lng]);
 
             const isPending = loc.status === 'Pending';
+            // Pending pin -> straight to the Resolve page. Cleaned pin -> Waste Reports with that row highlighted.
+            const target = isPending
+                ? 'resolve_report.php?id=' + encodeURIComponent(loc.report_id)
+                : 'admin_dashboard.php?view=reports&highlight=' + encodeURIComponent(loc.report_id);
+            const hint = isPending ? 'Click to resolve this report' : 'Click to view it in Waste Reports';
             const dateStr = new Date(loc.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
             const photo = loc.before_photo_path
                 ? `<img src="uploads/reports/${esc(loc.before_photo_path)}" alt="" style="width:100%; height:90px; object-fit:cover; border-radius:4px; margin-bottom:8px;">`
                 : '';
-            const card = `<div style="text-align:center; min-width:150px; padding:5px; font-family: 'Inter', sans-serif;">${photo}<div style="font-size:12px; color:${isPending ? '#B91C1C' : '#0369A1'}; font-weight:600;">${esc(loc.status)}</div><div style="font-size:11px; text-align:left; color:#687280; margin-top:4px;"><b>${esc(loc.full_name)}</b><br>${esc(dateStr)}</div></div>`;
+            const card = `<div style="text-align:center; min-width:150px; padding:5px; font-family: 'Inter', sans-serif;">${photo}<div style="font-size:12px; color:${isPending ? '#B91C1C' : '#0369A1'}; font-weight:600;">${esc(loc.status)}</div><div style="font-size:11px; text-align:left; color:#687280; margin-top:4px;"><b>${esc(loc.full_name)}</b><br>${esc(dateStr)}</div><div style="font-size:11px; margin-top:6px; color:#0369A1; font-weight:600;">${hint}</div></div>`;
 
-            L.marker([lat, lng], { icon: pinIcon(loc.status) }).addTo(map).bindTooltip(card, { direction: 'top', opacity: 1 });
+            const marker = L.marker([lat, lng], { icon: pinIcon(loc.status), riseOnHover: true }).addTo(map);
+            marker.bindTooltip(card, { direction: 'top', opacity: 1 });
+            marker.on('click', function () { window.location.href = target; });
+            const markerEl = marker.getElement();
+            if (markerEl) markerEl.setAttribute('aria-label', (isPending ? 'Pending' : 'Cleaned') + ' report by ' + loc.full_name + '. ' + hint);
         });
 
         // Show every pin instead of only the default area
@@ -1879,6 +2046,176 @@ if ($view === 'dashboard') {
         }
         setTimeout(function () { map.invalidateSize(); }, 300);
     });
+
+    // ---------- Reports Overview line chart: reported vs resolved (plain SVG, no extra library) ----------
+    (function () {
+        const holder = document.getElementById('reportsChart');
+        if (!holder) return;
+
+        const DATA = <?php echo json_encode($chart_data, JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT); ?>;
+        const COPY = {
+            weekly:  { sub: 'Reports submitted and resolved per week',  now: 'this week',  before: 'last week' },
+            monthly: { sub: 'Reports submitted and resolved per month', now: 'this month', before: 'last month' }
+        };
+        const tip = document.getElementById('chartTip');
+        const H = 270, PAD = { top: 18, right: 18, bottom: 34, left: 38 };
+        let period = 'weekly';
+
+        // smooth line that never overshoots the data (monotone cubic)
+        function smoothPath(pts) {
+            const n = pts.length;
+            if (n < 2) return 'M' + pts[0].x + ',' + pts[0].y;
+            const dx = [], dy = [], m = [];
+            for (let i = 0; i < n - 1; i++) { dx[i] = pts[i + 1].x - pts[i].x; dy[i] = pts[i + 1].y - pts[i].y; m[i] = dy[i] / dx[i]; }
+            const t = [m[0]];
+            for (let i = 1; i < n - 1; i++) t[i] = (m[i - 1] * m[i] <= 0) ? 0 : (m[i - 1] + m[i]) / 2;
+            t[n - 1] = m[n - 2];
+            for (let i = 0; i < n - 1; i++) {
+                if (m[i] === 0) { t[i] = 0; t[i + 1] = 0; continue; }
+                const a = t[i] / m[i], b = t[i + 1] / m[i], s = a * a + b * b;
+                if (s > 9) { const k = 3 / Math.sqrt(s); t[i] = k * a * m[i]; t[i + 1] = k * b * m[i]; }
+            }
+            let d = 'M' + pts[0].x + ',' + pts[0].y;
+            for (let i = 0; i < n - 1; i++) {
+                const h = dx[i] / 3;
+                d += ' C' + (pts[i].x + h) + ',' + (pts[i].y + t[i] * h) + ' ' + (pts[i + 1].x - h) + ',' + (pts[i + 1].y - t[i + 1] * h) + ' ' + pts[i + 1].x + ',' + pts[i + 1].y;
+            }
+            return d;
+        }
+
+        function plural(n) { return n + (n === 1 ? ' report' : ' reports'); }
+
+        function chip(kind, word, now, before, whenBefore) {
+            const diff = now - before;
+            let delta;
+            if (diff === 0) delta = '<span class="chart-delta" title="Same as ' + whenBefore + '"><i class="ti ti-minus"></i></span>';
+            else delta = '<span class="chart-delta ' + kind + (diff > 0 ? ' up' : '') + '" title="' + Math.abs(diff) + (diff > 0 ? ' more' : ' fewer') + ' than ' + whenBefore + '"><i class="ti ' + (diff > 0 ? 'ti-trending-up' : 'ti-trending-down') + '"></i>' + Math.abs(diff) + '</span>';
+            return '<span class="chart-chip"><i class="chart-key ' + kind + '"></i><strong>' + now + '</strong> ' + word + delta + '</span>';
+        }
+
+        function updateSummary(rows) {
+            const cur = rows[rows.length - 1], prev = rows[rows.length - 2], copy = COPY[period];
+            document.getElementById('chartSummary').innerHTML =
+                chip('reported', 'reported', cur.count, prev.count, copy.before) +
+                chip('resolved', 'resolved', cur.resolved, prev.resolved, copy.before) +
+                '<span class="chart-when">' + copy.now + '</span>';
+        }
+
+        function render() {
+            const rows = DATA[period];
+            const W = Math.max(holder.clientWidth - 40, 300);
+            const plotW = W - PAD.left - PAD.right, plotH = H - PAD.top - PAD.bottom;
+            const max = Math.max.apply(null, rows.map(function (r) { return Math.max(r.count, r.resolved); }));
+            const yMax = Math.max(4, Math.ceil(max / 4) * 4);
+            const x = function (i) { return PAD.left + (rows.length === 1 ? plotW / 2 : (plotW * i) / (rows.length - 1)); };
+            const y = function (v) { return PAD.top + plotH - (v / yMax) * plotH; };
+            const reported = rows.map(function (r, i) { return { x: x(i), y: y(r.count) }; });
+            const resolved = rows.map(function (r, i) { return { x: x(i), y: y(r.resolved) }; });
+
+            let svg = '<defs><linearGradient id="chartFill" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#0284C7" stop-opacity="0.18"/><stop offset="100%" stop-color="#0284C7" stop-opacity="0"/></linearGradient></defs>';
+
+            for (let g = 0; g <= 4; g++) {                                   // grid + y labels
+                const val = (yMax / 4) * g, gy = y(val);
+                svg += '<line class="' + (g === 0 ? 'chart-axis' : 'chart-grid') + '" x1="' + PAD.left + '" x2="' + (W - PAD.right) + '" y1="' + gy + '" y2="' + gy + '"/>';
+                svg += '<text x="' + (PAD.left - 10) + '" y="' + (gy + 4) + '" text-anchor="end">' + val + '</text>';
+            }
+
+            const step = Math.max(1, Math.ceil(rows.length / Math.max(2, Math.floor(plotW / 62))));
+            rows.forEach(function (r, i) {                                   // x labels (skip some when narrow)
+                if ((rows.length - 1 - i) % step !== 0) return;
+                svg += '<text x="' + x(i) + '" y="' + (H - 10) + '" text-anchor="middle">' + r.label + '</text>';
+            });
+
+            const total = rows.reduce(function (sum, r) { return sum + r.count + r.resolved; }, 0);
+            if (total === 0) {
+                svg += '<text class="chart-empty" x="' + (W / 2) + '" y="' + (PAD.top + plotH / 2) + '">No reports in this period yet</text>';
+            } else {
+                const lineR = smoothPath(reported);
+                svg += '<path class="chart-area" d="' + lineR + ' L' + reported[reported.length - 1].x + ',' + y(0) + ' L' + reported[0].x + ',' + y(0) + ' Z" fill="url(#chartFill)"/>';
+                svg += '<path class="chart-line reported" d="' + lineR + '"/>';
+                svg += '<path class="chart-line resolved" d="' + smoothPath(resolved) + '"/>';
+            }
+
+            svg += '<line class="chart-guide" id="chartGuide" x1="0" x2="0" y1="' + PAD.top + '" y2="' + y(0) + '"/>';
+            rows.forEach(function (r, i) {                                   // dots: reported first, resolved on top
+                const last = i === rows.length - 1 ? ' latest' : '';
+                svg += '<circle class="chart-dot reported' + last + '" data-i="' + i + '" cx="' + reported[i].x + '" cy="' + reported[i].y + '" r="4"/>';
+                svg += '<circle class="chart-dot resolved' + last + '" data-i="' + i + '" cx="' + resolved[i].x + '" cy="' + resolved[i].y + '" r="4"/>';
+            });
+            const colW = rows.length === 1 ? plotW : plotW / (rows.length - 1);
+            rows.forEach(function (r, i) {                                   // one focusable hover/keyboard area per period
+                const label = r.full + ': ' + plural(r.count) + ' submitted, ' + plural(r.resolved) + ' resolved';
+                svg += '<rect class="chart-hit" tabindex="0" data-i="' + i + '" x="' + (x(i) - colW / 2) + '" y="' + PAD.top + '" width="' + colW + '" height="' + plotH + '" aria-label="' + label + '"><title>' + label + '</title></rect>';
+            });
+
+            holder.querySelectorAll('svg').forEach(function (old) { old.remove(); });
+            holder.insertAdjacentHTML('afterbegin', '<svg class="chart-svg" viewBox="0 0 ' + W + ' ' + H + '" role="group" aria-label="Line chart of ' + COPY[period].sub.toLowerCase() + '">' + svg + '</svg>');
+
+            holder.querySelectorAll('.chart-line').forEach(function (lineEl) {   // draw-in animation
+                if (lineEl.getTotalLength) {
+                    const len = Math.ceil(lineEl.getTotalLength());
+                    lineEl.style.setProperty('--len', len);
+                    lineEl.style.strokeDasharray = len;
+                }
+            });
+
+            const svgEl = holder.querySelector('svg');
+            const guide = svgEl.querySelector('#chartGuide');
+            function clearDots() { svgEl.querySelectorAll('.chart-dot.on').forEach(function (d) { d.classList.remove('on'); }); }
+            function showTip(i) {
+                const r = rows[i], scale = svgEl.clientWidth / W || 1;
+                tip.innerHTML = '<div class="tip-date">' + r.full + '</div>' +
+                    '<div class="tip-row"><i class="chart-key reported"></i> Reported <strong>' + r.count + '</strong></div>' +
+                    '<div class="tip-row"><i class="chart-key resolved"></i> Resolved <strong>' + r.resolved + '</strong></div>';
+                tip.hidden = false;
+                tip.style.left = (20 + x(i) * scale) + 'px';
+                tip.style.top = (8 + Math.min(reported[i].y, resolved[i].y) * scale - 14) + 'px';
+                guide.setAttribute('x1', x(i)); guide.setAttribute('x2', x(i));
+                guide.classList.add('show');
+                clearDots();
+                svgEl.querySelectorAll('.chart-dot[data-i="' + i + '"]').forEach(function (d) { d.classList.add('on'); });
+            }
+            function hideTip() { tip.hidden = true; guide.classList.remove('show'); clearDots(); }
+
+            svgEl.addEventListener('pointermove', function (e) {              // nearest period, anywhere over the chart
+                const box = svgEl.getBoundingClientRect(), px = (e.clientX - box.left) * (W / box.width);
+                let best = 0;
+                reported.forEach(function (p, i) { if (Math.abs(p.x - px) < Math.abs(reported[best].x - px)) best = i; });
+                showTip(best);
+            });
+            svgEl.addEventListener('pointerleave', hideTip);
+            svgEl.querySelectorAll('.chart-hit').forEach(function (hit) {
+                hit.addEventListener('focus', function () { showTip(+hit.dataset.i); });
+                hit.addEventListener('blur', hideTip);
+            });
+
+            updateSummary(rows);
+            document.getElementById('chartSub').textContent = COPY[period].sub;
+        }
+
+        document.querySelectorAll('.chart-toggle-btn').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                if (btn.dataset.period === period) return;
+                period = btn.dataset.period;
+                document.querySelectorAll('.chart-toggle-btn').forEach(function (b) {
+                    const on = b === btn;
+                    b.classList.toggle('active', on);
+                    b.setAttribute('aria-pressed', on ? 'true' : 'false');
+                });
+                tip.hidden = true;
+                render();
+            });
+        });
+
+        render();
+        let resizeFrame = null, lastWidth = holder.clientWidth;
+        window.addEventListener('resize', function () {
+            if (holder.clientWidth === lastWidth) return;
+            lastWidth = holder.clientWidth;
+            cancelAnimationFrame(resizeFrame);
+            resizeFrame = requestAnimationFrame(render);
+        });
+    })();
     <?php endif; ?>
 </script>
 
