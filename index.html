@@ -2,10 +2,14 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
+    <meta name="theme-color" content="#3F4D67">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>Coastal Land Watch App</title>
     
     <!-- CSS Dependencies -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
  
@@ -21,7 +25,7 @@
                 if (!userSession) {
                     window.location.replace("login.html");
                 } else if (userSession.role === 'Admin' || userSession.role === 'secretary') {
-                    alert("Para sa mga Admin at Secretary, mangyari po lamang na gamitin ang Web Dashboard sa inyong computer.");
+                    await alert("Para sa mga Admin at Secretary, mangyari po lamang na gamitin ang Web Dashboard sa inyong computer.");
                     await localforage.removeItem('user_session'); 
                     window.location.replace("login.html");
                 }
@@ -31,467 +35,792 @@
         });
     </script>
 
+    <script src="js/notify.js"></script>
+
     <style>
-        /* ============================================
-           MODERN iOS "PILL & BUBBLE" DESIGN
-        ============================================= */
+        /* =====================================================
+           DESIGN TOKENS
+        ===================================================== */
         :root {
-            --bg-color: #f5f6f7;
-            --card-white: #ffffff;
-            --text-dark: #212529;
-            --text-gray: #8e8e93;
-            --border-light: #e5e5ea;
+            --bg-body: #f4f6fa;
+            --bg-surface: #ffffff;
+            --primary: #0ea5e9;
+            --primary-light: #e0f2fe;
+            --primary-dark: #0284c7;
+            --brand-slate: #3F4D67;
+            --brand-slate-deep: #2c3850;
+            --green: #10b981;
+            --green-light: #ecfdf5;
+            --green-dark: #047857;
+            --red: #ef4444;
+            --red-light: #fef2f2;
+            --red-dark: #b91c1c;
+            --amber-light: #fffbeb;
+            --amber-dark: #b45309;
+            --text-main: #172033;
+            --text-muted: #64748b;
+            --border-color: #e8ecf3;
+            --shadow-sm: 0 1px 2px rgba(23, 32, 51, 0.05);
+            --shadow-md: 0 6px 20px rgba(23, 32, 51, 0.06);
+            --shadow-lg: 0 16px 40px rgba(23, 32, 51, 0.14);
+            --radius-card: 22px;
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
 
-        body { 
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; 
-            background-color: #f5f6f7;
-            background-image: 
-                radial-gradient(circle at 0% 0%, rgba(59, 130, 246, 0.08) 0%, transparent 50%),
-                radial-gradient(circle at 100% 0%, rgba(217, 250, 74, 0.25) 0%, transparent 45%),
-                radial-gradient(circle at 50% 100%, rgba(0, 0, 0, 0.02) 0%, transparent 50%);
-            background-attachment: fixed;
-            margin: 0; padding: 0; overscroll-behavior-y: none; overflow-x: hidden;
-            padding-bottom: 120px;
-            color: var(--text-dark);
+        * { -webkit-tap-highlight-color: transparent; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-body);
+            margin: 0; padding: 0;
+            overscroll-behavior-y: none; overflow-x: hidden;
+            padding-bottom: calc(120px + var(--safe-bottom));
+            color: var(--text-main);
+            -webkit-font-smoothing: antialiased;
         }
 
-        .content-section { display: none; }
+        .content-section { display: none; animation: sectionIn 0.35s ease both; }
+        @keyframes sectionIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-        .top-bar { padding: 60px 24px 20px; margin-bottom: 10px; }
-        .top-bar h2, .top-bar #home_greeting { margin: 0; font-size: 32px; font-weight: 700; color: var(--text-dark); letter-spacing: -0.5px; line-height: 1.2; }
-        .top-bar p { margin: 6px 0 0; font-size: 15px; color: var(--text-gray); font-weight: 500; }
-        .body-container { padding: 0 24px; }
-
-        .card {
-            background: var(--card-white);
-            border-radius: 28px;
-            padding: 24px;
-            margin-bottom: 16px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
-            border: none;
-            transition: transform 0.2s ease;
+        /* =====================================================
+           HEADER BAND (each page owns its header, so text always
+           sits on a solid colour and the body stays clean)
+        ===================================================== */
+        .top-bar {
+            position: relative; overflow: hidden;
+            padding: calc(var(--safe-top) + 20px) 24px 36px;
+            color: #ffffff;
+            background: linear-gradient(155deg, var(--brand-slate-deep) 0%, var(--brand-slate) 55%, #4a5c7c 100%);
+            border-radius: 0 0 32px 32px;
         }
-        .card:active { transform: scale(0.98); }
-        .card-title { font-size: 20px; font-weight: 600; color: var(--text-dark); margin: 0 0 6px; letter-spacing: -0.5px; }
-        .card-sub { font-size: 15px; color: var(--text-gray); margin: 0; line-height: 1.5; font-weight: 400; }
-        .section-title { font-size: 18px; font-weight: 600; color: var(--text-dark); margin: 28px 0 16px; letter-spacing: -0.3px; }
+        .top-bar::before, .top-bar::after {
+            content: ""; position: absolute; border-radius: 50%; pointer-events: none;
+        }
+        .top-bar::before { width: 220px; height: 220px; right: -70px; top: -90px; background: rgba(255, 255, 255, 0.06); }
+        .top-bar::after  { width: 160px; height: 160px; left: -60px; bottom: -80px; background: rgba(14, 165, 233, 0.16); }
+        .top-bar > * { position: relative; z-index: 1; }
+        .top-bar.tall { padding-bottom: 76px; }
 
+        .top-bar h2, .top-bar #home_greeting {
+            margin: 0; font-size: 24px; font-weight: 700; color: #ffffff;
+            letter-spacing: -0.4px; line-height: 1.2;
+        }
+        .top-bar p {
+            margin: 6px 0 0; font-size: 14px; color: rgba(255, 255, 255, 0.8); font-weight: 500;
+            display: flex; align-items: center; gap: 4px;
+        }
+        .top-bar #home_greeting { font-size: 18px; font-weight: 600; }
+        .top-bar .home-sub { font-size: 13px; margin-top: 3px; }
+
+        .header-title { font-size: 30px; font-weight: 800; color: #ffffff; margin: 44px 0 0; line-height: 1.15; letter-spacing: -0.8px; }
+        .body-container { padding: 0 20px; }
+
+        /* Home top row */
+        .home-row { display: flex; justify-content: space-between; align-items: center; }
+        .home-user { display: flex; align-items: center; gap: 12px; }
+        .home-avatar {
+            width: 48px; height: 48px; border-radius: 50%;
+            background: var(--primary); color: #fff;
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 18px; overflow: hidden;
+            border: 2px solid rgba(255, 255, 255, 0.35);
+        }
+        .bell-btn {
+            position: relative; cursor: pointer;
+            background: rgba(255, 255, 255, 0.12);
+            width: 44px; height: 44px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            border: 1px solid rgba(255, 255, 255, 0.22);
+            transition: background 0.2s;
+        }
+        .bell-btn:active { background: rgba(255, 255, 255, 0.24); }
+        .bell-btn i { font-size: 20px; color: #fff; }
+        #unreadBadge {
+            display: none; position: absolute; top: 9px; right: 10px;
+            width: 10px; height: 10px; background-color: var(--red);
+            border-radius: 50%; border: 2px solid var(--brand-slate);
+        }
+
+        /* =====================================================
+           FLOATING CARD (overlaps the header band)
+        ===================================================== */
+        .floating-card-container { padding: 0 20px; margin-top: -68px; position: relative; z-index: 10; }
+        .floating-card {
+            background: var(--bg-surface);
+            border-radius: 26px; padding: 18px;
+            box-shadow: var(--shadow-lg);
+            border: 1px solid var(--border-color);
+        }
+
+        /* TOGGLE TABS */
+        .toggle-tabs { display: flex; background: var(--bg-body); border-radius: 14px; padding: 4px; margin-bottom: 16px; }
+        .toggle-tab {
+            flex: 1 1 0; display: flex; align-items: center; justify-content: center;
+            text-align: center; padding: 10px 6px; font-size: 13px; font-weight: 600; line-height: 1.2;
+            color: var(--text-muted); border-radius: 11px; cursor: pointer; transition: all 0.2s;
+        }
+        .toggle-tab:last-child { flex: 1.25 1 0; }
+        .toggle-tab.active { background: var(--bg-surface); color: var(--brand-slate); box-shadow: 0 2px 8px rgba(23, 32, 51, 0.08); }
+
+        /* STAT BOX */
+        .stat-box {
+            display: flex; align-items: center; gap: 16px; padding: 16px 18px;
+            background: #f0f9ff; border: 1px solid #e0f2fe;
+            border-radius: 16px; margin-bottom: 16px;
+        }
+        .stat-box.green { background: var(--green-light); border-color: #d1fae5; }
+        .stat-icon-wrapper {
+            width: 46px; height: 46px; background: #ffffff; border-radius: 14px;
+            display: flex; align-items: center; justify-content: center; color: var(--primary);
+            font-size: 22px; box-shadow: var(--shadow-sm); flex-shrink: 0;
+        }
+        .stat-box.green .stat-icon-wrapper { color: var(--green); }
+        .stat-info { display: flex; flex-direction: column; gap: 2px; }
+        .stat-label { font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 700; letter-spacing: 0.6px; }
+        .stat-value { font-size: 28px; font-weight: 800; color: var(--text-main); line-height: 1.1; letter-spacing: -0.5px; }
+
+        /* BUTTONS */
         .btn-primary {
-            background: var(--text-dark);
-            color: var(--card-white);
-            border: none;
-            border-radius: 40px;
-            padding: 18px 24px;
-            width: 100%;
-            font-size: 16px;
-            font-weight: 600;
-            text-align: center;
-            margin-bottom: 15px;
-            cursor: pointer;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
+            color: #ffffff; border: none; border-radius: 16px;
+            padding: 16px; width: 100%;
+            font-size: 15px; font-weight: 700; text-align: center; cursor: pointer;
             display: flex; align-items: center; justify-content: center; gap: 8px;
-            box-shadow: 0 8px 20px rgba(33, 37, 41, 0.15); 
-            transition: 0.2s;
+            box-shadow: 0 8px 18px rgba(14, 165, 233, 0.32);
+            transition: transform 0.15s, box-shadow 0.15s; font-family: inherit;
         }
-        .btn-primary:active { transform: scale(0.96); box-shadow: 0 4px 10px rgba(33, 37, 41, 0.1); }
-        
+        .btn-primary i { font-size: 18px; }
+        .btn-primary:active { transform: scale(0.98); box-shadow: 0 4px 10px rgba(14, 165, 233, 0.3); }
+        .btn-primary:disabled { background: #cbd5e1; box-shadow: none; cursor: not-allowed; color: #f8fafc; }
+
         .btn-outline {
-            background: var(--card-white);
-            color: var(--text-dark);
-            border: none;
-            border-radius: 40px;
-            padding: 16px;
-            width: 100%;
-            font-size: 15px;
-            font-weight: 500;
-            text-align: center;
-            margin-bottom: 15px;
+            background: var(--bg-surface); color: var(--text-main);
+            border: 1.5px solid var(--border-color); border-radius: 14px;
+            padding: 14px; width: 100%;
+            font-size: 14px; font-weight: 600; text-align: center; margin-bottom: 12px;
             display: flex; align-items: center; justify-content: center; gap: 8px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.04);
-            transition: 0.2s;
+            box-shadow: var(--shadow-sm); transition: all 0.15s; font-family: inherit; cursor: pointer;
         }
-        .btn-outline:active { background: #e5e5ea; }
+        .btn-outline i { color: var(--primary); font-size: 18px; }
+        .btn-outline:active { background: var(--bg-body); border-color: var(--primary); }
 
-        .input-label { font-size: 15px; font-weight: 600; color: var(--text-dark); margin: 0 0 10px; display: block; }
+        /* CARDS */
+        .card {
+            background: var(--bg-surface); border-radius: var(--radius-card);
+            padding: 20px; margin-bottom: 16px;
+            box-shadow: var(--shadow-md); border: 1px solid var(--border-color);
+        }
+        .card-title { font-size: 16px; font-weight: 600; color: var(--text-main); margin: 0 0 6px; }
+        .card-sub { font-size: 13px; color: var(--text-muted); margin: 0; line-height: 1.5; }
+        .section-title { font-size: 13px; font-weight: 700; color: var(--text-muted); margin: 28px 4px 10px; text-transform: uppercase; letter-spacing: 0.8px; }
+
+        .section-header { display: flex; justify-content: space-between; align-items: center; margin: 28px 24px 12px; }
+        .section-header h3 { margin: 0; font-size: 18px; font-weight: 700; color: var(--text-main); letter-spacing: -0.2px; }
+        .section-header a { font-size: 13px; color: var(--primary-dark); font-weight: 600; text-decoration: none; background: var(--primary-light); padding: 6px 12px; border-radius: 20px; }
+
+        .map-card { padding: 0; overflow: hidden; margin: 0 20px 24px; }
+        #communityMap, #reportPinMap { width: 100%; position: relative; z-index: 1; }
+        #communityMap { height: 250px; }
+        #reportPinMap { height: 250px; }
+
+        /* INPUTS */
+        .input-label { font-size: 13.5px; font-weight: 600; color: var(--text-main); margin: 0 0 8px; display: block; }
         .input-field {
-            background: var(--card-white);
-            border: 1px solid var(--border-light);
-            border-radius: 20px;
-            padding: 18px;
-            font-size: 16px;
-            color: var(--text-dark);
-            width: 100%;
-            box-sizing: border-box;
-            margin-bottom: 24px;
-            outline: none;
-            transition: 0.2s;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.01);
+            background: #f8fafc; border: 1.5px solid #e2e8f0; border-radius: 14px;
+            padding: 14px; font-size: 14px; color: var(--text-main); font-family: inherit;
+            width: 100%; box-sizing: border-box; margin-bottom: 16px; outline: none; transition: 0.2s;
         }
-        .input-field:focus { border-color: var(--text-dark); }
+        .input-field::placeholder { color: #94a3b8; }
+        .input-field:focus { border-color: var(--primary); background: #fff; box-shadow: 0 0 0 4px var(--primary-light); }
+        .card .input-field:last-child { margin-bottom: 0; }
+        textarea.input-field { resize: none; }
+        select.input-field { cursor: pointer; appearance: none; background-image: url('data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%2364748b%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E'); background-repeat: no-repeat; background-position: right 14px top 50%; background-size: 12px auto; padding-right: 40px; }
 
-        .badge { display: inline-block; border-radius: 20px; padding: 6px 12px; font-size: 12px; font-weight: 600; }
-        .badge-pending { background: #FCE8E8; color: #F87171; }
-        .badge-done { background: #E6F8F3; color: #34D399; }
- 
+        /* BADGES & CHIPS */
+        .badge { display: inline-block; border-radius: 20px; padding: 4px 10px; font-size: 11px; font-weight: 700; }
+        .badge-pending { background: var(--amber-light); color: var(--amber-dark); border: 1px solid #fde68a; }
+        .badge-done { background: var(--green-light); color: var(--green-dark); border: 1px solid #a7f3d0; }
+
         .status-chip {
             display: flex; align-items: center; justify-content: center; gap: 8px;
-            font-size: 14px; font-weight: 500;
-            margin: 4px 0 20px; padding: 16px;
-            border-radius: 20px; background: #FCE8E8; color: #F87171; 
+            font-size: 13px; font-weight: 600; margin: 4px 0 0; padding: 12px;
+            border-radius: 14px; background: var(--amber-light); color: var(--amber-dark); border: 1px solid #fde68a;
+            transition: all 0.25s;
         }
-        .status-chip.is-pinned { background: var(--text-dark); color: var(--card-white); }
+        .status-chip.is-pinned { background: var(--green-light); color: var(--green-dark); border-color: #a7f3d0; }
 
-        .stat-card {
-            background: var(--card-white);
-            border-radius: 28px;
-            padding: 24px;
-            display: flex; flex-direction: column; gap: 4px;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.03);
+        /* Loading / error / empty messages inside feed + history */
+        #feed_container, #history_container { padding-top: 24px; }
+        #feed_container > p, #history_container > p,
+        #feed_container > [style*="text-align: center"], #feed_container > [style*="text-align:center"],
+        #history_container > [style*="text-align: center"], #history_container > [style*="text-align:center"] {
+            background: var(--bg-surface); border: 1px solid var(--border-color);
+            border-radius: var(--radius-card); box-shadow: var(--shadow-md);
+            padding: 32px 20px !important; margin: 0 !important;
+            text-align: center; font-size: 14px; font-weight: 500; line-height: 1.5;
+            color: var(--text-muted) !important;
         }
-        .stat-card.dark { background: var(--text-dark); color: var(--card-white); }
-        .stat-card i { font-size: 24px; margin-bottom: 12px; }
-        .stat-card p.label { font-size: 14px; color: var(--text-gray); margin: 0; font-weight: 500; }
-        .stat-card.dark p.label { color: #a1a1aa; }
-        .stat-card p.value { font-size: 42px; font-weight: 600; margin: 0; letter-spacing: -1px; }
+        #feed_container > p[style*="red"], #feed_container > p[style*="#e"], #feed_container > p[style*="#f"],
+        #feed_container > [style*="color: red"], #feed_container > [style*="color:red"],
+        #feed_container > [style*="#ef4444"], #feed_container > [style*="#e57373"], #feed_container > [style*="#f87171"] {
+            color: var(--red-dark) !important; background: var(--red-light); border-color: #fecaca;
+        }
 
+        /* =====================================================
+           FLOATING PILL NAVIGATION
+        ===================================================== */
         .nav-bar {
-            background: rgba(255, 255, 255, 0.75);
-            backdrop-filter: blur(25px);
-            -webkit-backdrop-filter: blur(25px);
+            background: rgba(255, 255, 255, 0.96);
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
             display: flex; justify-content: space-around; align-items: center;
-            padding: 12px 10px 10px; 
-            position: fixed; bottom: 24px; left: 24px; right: 24px;
-            z-index: 1000;
-            border-radius: 40px; 
-            box-shadow: 0 8px 30px rgba(0, 0, 0, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.6);
+            padding: 8px 6px;
+            position: fixed; left: 50%; transform: translateX(-50%);
+            bottom: calc(14px + var(--safe-bottom));
+            width: calc(100% - 28px); max-width: 480px; box-sizing: border-box;
+            z-index: 1000; border-radius: 30px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 14px 34px rgba(23, 32, 51, 0.18);
         }
         .nav-item {
             display: flex; flex-direction: column; align-items: center; justify-content: center;
-            color: var(--text-gray);
-            text-decoration: none; 
-            gap: 4px;
-            position: relative; transition: 0.3s;
+            color: var(--text-muted); text-decoration: none; gap: 3px;
+            padding: 8px 12px; border-radius: 20px; min-width: 52px; transition: all 0.2s;
         }
-        .nav-item span { display: block; font-size: 11px; font-weight: 600; }
-        .nav-item.active { background: transparent; color: var(--text-dark); transform: scale(1.05); }
-        .nav-item i { font-size: 24px; }
+        .nav-item span { font-size: 10.5px; font-weight: 600; }
+        .nav-item i { font-size: 22px; }
+        .nav-item.active { color: var(--primary-dark); background: var(--primary-light); }
 
+        /* Raised centre "Report" button */
+        #nav-report { background: transparent !important; padding-top: 0; }
+        #nav-report i {
+            width: 52px; height: 52px; margin-top: -26px;
+            display: flex; align-items: center; justify-content: center;
+            border-radius: 50%; font-size: 24px; color: #fff;
+            background: linear-gradient(135deg, var(--primary), var(--primary-dark));
+            box-shadow: 0 8px 18px rgba(14, 165, 233, 0.4); border: 4px solid #fff;
+            box-sizing: content-box;
+        }
+        #nav-report.active { color: var(--primary-dark); }
+
+        /* =====================================================
+           MODALS
+        ===================================================== */
         .modal-overlay {
             position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-            background: rgba(0, 0, 0, 0.5); 
-            backdrop-filter: blur(8px); 
+            background: rgba(23, 32, 51, 0.55);
+            backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);
             z-index: 2000; display: flex; align-items: center; justify-content: center; padding: 20px;
         }
         .modal-content {
-            background: var(--bg-color); width: 100%; max-width: 400px; border-radius: 36px; padding: 32px;
-            box-shadow: 0 25px 50px rgba(0,0,0,0.15); 
-            position: relative;
+            background: var(--bg-surface); width: 100%; max-width: 400px;
+            border-radius: 28px; padding: 24px;
+            box-shadow: var(--shadow-lg); position: relative; animation: popIn 0.25s ease both;
         }
+        @keyframes popIn { from { opacity: 0; transform: translateY(14px) scale(0.98); } to { opacity: 1; transform: none; } }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px; }
+        .modal-header h3 { margin: 0; color: var(--text-main); font-size: 18px; font-weight: 700; letter-spacing: -0.2px; }
+        .icon-btn {
+            background: var(--bg-body); border: none; border-radius: 50%;
+            width: 36px; height: 36px; display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .icon-btn i { font-size: 18px; color: var(--text-main); }
+
+        .photo-pair { display: flex; gap: 12px; margin-bottom: 20px; width: 100%; }
+        .photo-pair p { font-size: 12px; font-weight: 700; margin: 0 0 8px; color: var(--text-muted); }
+        .photo-pair img { width: 100%; height: 120px; object-fit: cover; border-radius: 14px; border: 1px solid var(--border-color); }
+
+        .detail-box { background: var(--bg-body); border-radius: 16px; padding: 4px 16px; }
+        .detail-row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 0; font-size: 13px; border-bottom: 1px solid var(--border-color); }
+        .detail-row:last-child { border-bottom: none; }
+        .detail-key { font-weight: 700; color: var(--text-main); flex-shrink: 0; }
+        .detail-row > :last-child { text-align: right; color: var(--text-muted); }
+        .desc-box { background: var(--bg-body); padding: 16px; border-radius: 16px; margin-top: 12px; }
+        .desc-box .desc-title { margin: 0; font-size: 13px; font-weight: 700; color: var(--text-main); }
+        .desc-box #modalDesc { color: var(--text-muted); font-size: 13px; margin: 8px 0 0; line-height: 1.55; }
+
+        /* Edit profile (full screen) */
+        #editProfileModal { padding: 0; background: var(--bg-body); }
+        #editProfileModal .modal-content {
+            width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0;
+            padding: calc(var(--safe-top) + 36px) 24px 110px; overflow-y: auto;
+            background: var(--bg-body); box-shadow: none; box-sizing: border-box;
+        }
+        .edit-avatar-wrap { text-align: center; margin-bottom: 28px; }
+        .edit-avatar-inner { position: relative; display: inline-block; }
+        #editProfilePreview { width: 104px; height: 104px; border-radius: 50%; object-fit: cover; border: 4px solid #fff; box-shadow: var(--shadow-md); }
+        #changeProfilePicBtn {
+            position: absolute; bottom: 0; right: 0; background: var(--primary); color: #fff;
+            border: 3px solid #fff; border-radius: 50%; width: 36px; height: 36px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+        }
+        #editProfileForm .input-field { background: #fff; }
+
+        /* =====================================================
+           PROFILE PAGE
+        ===================================================== */
+        .profile-top { text-align: center; padding-bottom: 40px; }
+        #profile_top_avatar_box {
+            width: 100px; height: 100px; border-radius: 50%;
+            background: var(--primary-light); color: var(--primary-dark);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 32px; font-weight: 700; margin: 0 auto 16px; overflow: hidden;
+            border: 4px solid rgba(255, 255, 255, 0.4); box-shadow: 0 8px 20px rgba(0, 0, 0, 0.18);
+        }
+        .profile-top h2 { font-size: 24px; }
+        .profile-top p { justify-content: center; }
+
+        .menu-card { padding: 6px 16px; }
+        .menu-row { display: flex; align-items: center; justify-content: space-between; padding: 14px 0; cursor: pointer; }
+        .menu-row + .menu-row { border-top: 1px solid var(--border-color); }
+        .menu-left { display: flex; align-items: center; gap: 12px; font-size: 14px; font-weight: 600; color: var(--text-main); }
+        .menu-icon { width: 38px; height: 38px; border-radius: 12px; display: flex; align-items: center; justify-content: center; font-size: 20px; background: var(--primary-light); color: var(--primary-dark); }
+        .menu-icon.red { background: var(--red-light); color: var(--red); }
+        .menu-left.danger { color: var(--red-dark); }
+        .menu-row > .ti-chevron-right { color: #cbd5e1; font-size: 18px; }
+        .menu-row:active { opacity: 0.6; }
+
+        /* EMERGENCY HOTLINES (home tab + emergency modal) */
+        .hotline-row {
+            display: flex; align-items: center; gap: 12px; padding: 12px 14px; margin-bottom: 10px;
+            background: #f8fafc; border: 1px solid var(--border-color); border-radius: 16px;
+            text-decoration: none; color: inherit; transition: background 0.15s;
+        }
+        .hotline-row:last-child { margin-bottom: 0; }
+        .hotline-row:active { background: var(--primary-light); }
+        .hotline-icon {
+            width: 42px; height: 42px; border-radius: 14px; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 21px;
+            background: var(--primary-light); color: var(--primary-dark);
+        }
+        .hotline-icon.red { background: var(--red-light); color: var(--red); }
+        .hotline-info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+        .hotline-name { font-size: 14px; font-weight: 700; color: var(--text-main); }
+        .hotline-desc { font-size: 12px; color: var(--text-muted); line-height: 1.35; }
+        .hotline-call {
+            display: inline-flex; align-items: center; gap: 4px; flex-shrink: 0;
+            background: var(--green-light); color: var(--green-dark); border: 1px solid #a7f3d0;
+            padding: 7px 10px; border-radius: 20px; font-size: 12px; font-weight: 700;
+        }
+
+        /* =====================================================
+           SKELETON LOADING
+        ===================================================== */
+        .sk { position: relative; overflow: hidden; background: #e4e9f1; border-radius: 10px; }
+        .sk::after {
+            content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+            animation: skShimmer 1.4s ease-in-out infinite;
+        }
+        @keyframes skShimmer { to { transform: translateX(100%); } }
+
+        .sk-card { background: var(--bg-surface); border-radius: 24px; padding: 20px; margin-bottom: 16px; box-shadow: var(--shadow-md); border: 1px solid var(--border-color); }
+        .sk-split { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+        .sk-line { height: 14px; border-radius: 8px; }
+        .sk-pill { height: 24px; width: 72px; border-radius: 20px; }
+        .sk-history { display: flex; gap: 16px; align-items: center; }
+        .sk-thumb { width: 80px; height: 80px; border-radius: 16px; flex-shrink: 0; }
+        .sk-lines { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 14px; }
+        .sk-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 22px; }
+        .sk-img { height: 140px; border-radius: 16px; }
+        .sk-alert { padding: 18px 20px; margin-bottom: 12px; box-shadow: none; }
+
+        /* Home stat numbers */
+        .stat-value.is-loading { position: relative; overflow: hidden; color: transparent !important; width: 64px; height: 30px; border-radius: 8px; background: #dbe3ef; }
+        .stat-value.is-loading::after {
+            content: ""; position: absolute; inset: 0; transform: translateX(-100%);
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.7), transparent);
+            animation: skShimmer 1.4s ease-in-out infinite;
+        }
+
+        /* Map: shimmering placeholder shows until the map tiles arrive */
+        #communityMap::before, #reportPinMap::before {
+            content: ""; position: absolute; inset: 0; z-index: 0;
+            background: linear-gradient(90deg, #e4e9f1 0%, #f1f4f9 50%, #e4e9f1 100%); background-size: 200% 100%;
+            animation: skMap 1.5s linear infinite;
+        }
+        @keyframes skMap { to { background-position: -200% 0; } }
+
+        /* Friendly error card (shown instead of the grey shapes when loading fails) */
+        .load-error {
+            background: var(--bg-surface); border: 1px solid var(--border-color); border-radius: var(--radius-card);
+            box-shadow: var(--shadow-md); padding: 30px 20px; text-align: center;
+        }
+        .load-error > i { font-size: 34px; color: #94a3b8; }
+        .load-error p { margin: 10px 0 18px; font-size: 14px; font-weight: 500; line-height: 1.5; color: var(--text-muted); }
+        .load-error .btn-outline { width: auto; display: inline-flex; margin: 0; padding: 12px 22px; }
+
+        @media (prefers-reduced-motion: reduce) {
+            .sk::after, .stat-value.is-loading::after, #communityMap::before, #reportPinMap::before { animation: none; }
+        }
+
+        /* =====================================================
+           COMPACT HEADERS: Feed, Report, History
+           Slimmer band that starts closer to the top, so the content below is visible right away.
+           (Home and Profile keep the original full-size header: no rule below targets them.)
+        ===================================================== */
+        #section-feed .top-bar,
+        #section-report .top-bar,
+        #section-history .top-bar {
+            padding: calc(var(--safe-top) + 14px) 22px 18px;
+            border-radius: 0 0 24px 24px;
+        }
+        #section-feed .top-bar::before, #section-report .top-bar::before, #section-history .top-bar::before {
+            width: 140px; height: 140px; right: -48px; top: -70px;
+        }
+        #section-feed .top-bar::after, #section-report .top-bar::after, #section-history .top-bar::after {
+            width: 100px; height: 100px; left: -40px; bottom: -55px;
+        }
+
+        #section-feed .top-bar h2, #section-report .top-bar h2, #section-history .top-bar h2 { font-size: 21px; }
+        #section-feed .top-bar p, #section-report .top-bar p, #section-history .top-bar p { font-size: 13px; margin-top: 3px; }
+
+        /* a little less space between the header and the first card */
+        #feed_container, #history_container { padding-top: 16px; }
+        #section-report .body-container { padding-top: 16px !important; }
     </style>
 </head>
 
 <body>
- 
+
     <!-- 🏠 HOME SECTION -->
     <div id="section-home" class="content-section" style="display: block;">
-        <div class="top-bar">
-            <div style="display:flex;justify-content:space-between;align-items:center;">
-                <div>
-                    <h2 id="home_greeting">Good morning,</h2>
-                    <p>Barangay Tanza</p>
+
+        <!-- HEADER (Avatar, Name, Bell, Title) -->
+        <div class="top-bar tall">
+            <div class="home-row">
+                <div class="home-user">
+                    <div class="home-avatar" id="home_profile_avatar">
+                        <span id="home_profile_initials">U</span>
+                        <img id="home_profile_img" src="" alt="Profile" style="width:100%; height:100%; object-fit:cover; display:none;">
+                    </div>
+                    <div>
+                        <h2 id="home_greeting">Hi, User 👋</h2>
+                        <p class="home-sub"><i class="ti ti-map-pin"></i> <span id="home_address">Purok 1</span></p>
+                    </div>
                 </div>
-                <div onclick="openAlertsModal()" style="position: relative; cursor: pointer; background: rgba(255, 255, 255, 0.6); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); width: 48px; height: 48px; border-radius: 50%; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(0,0,0,0.04); border: 1px solid rgba(255,255,255,0.8);">
-    <i class="ti ti-bell" style="font-size:24px;color:var(--text-dark);"></i>
-    
-    <!-- Red Unread Badge -->
-    <span id="unreadBadge" style="display: none; position: absolute; top: 11px; right: 12px; width: 10px; height: 10px; background-color: #EF4444; border-radius: 50%; border: 2px solid var(--card-white);"></span>
-</div>
+                <!-- Notification Bell -->
+                <div class="bell-btn" onclick="openAlertsModal()">
+                    <i class="ti ti-bell"></i>
+                    <span id="unreadBadge" style="display: none;"></span>
+                </div>
+            </div>
+            <h1 class="header-title">Where is the<br>waste issue?</h1>
+        </div>
+
+        <!-- FLOATING CARD (Tabs, Stat, Button) -->
+        <div class="floating-card-container">
+            <div class="floating-card">
+
+                <!-- Toggle Tabs -->
+                <div class="toggle-tabs">
+                    <div class="toggle-tab active" onclick="filterHomeReports('all', this)">My Reports</div>
+                    <div class="toggle-tab" onclick="filterHomeReports('resolved', this)">Resolved</div>
+                    <div class="toggle-tab" onclick="filterHomeReports('hotlines', this)">Emergency Hotlines</div>
+                </div>
+
+                <!-- Stat Box -->
+                <div class="stat-box" id="box_total" style="display: flex;">
+                    <div class="stat-icon-wrapper"><i class="ti ti-file-report"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Total Reports Submitted</div>
+                        <div class="stat-value" id="stat_total">0</div>
+                    </div>
+                </div>
+                <div class="stat-box green" id="box_resolved" style="display: none;">
+                    <div class="stat-icon-wrapper"><i class="ti ti-check"></i></div>
+                    <div class="stat-info">
+                        <div class="stat-label">Resolved Clean-ups</div>
+                        <div class="stat-value" id="stat_resolved">0</div>
+                    </div>
+                </div>
+
+                <!-- Emergency Hotlines (shown by the third tab) -->
+                <div id="home_hotlines_list" style="display: none; margin-bottom: 16px;"></div>
+
+                <!-- List Container (Hidden by default) -->
+                <div id="home_reports_list" style="display: none; margin-bottom: 16px;"></div>
+
+                <!-- Report Button -->
+                <button class="btn-primary" onclick="switchTab('report')">
+                    <i class="ti ti-plus"></i> Report a Waste Issue
+                </button>
             </div>
         </div>
-        
-        <div class="body-container">
-            <div class="card" style="margin-bottom: 24px; padding: 28px;">
-                <p class="card-title">Select your next action</p>
-                <p class="card-sub" style="margin-top: 6px;">Manage reports and track cleanups.</p>
-            </div>
- 
-            <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;margin-bottom:24px;">
-                <div class="stat-card">
-                    <div style="width: 40px; height: 40px; background: #f5f6f7; color: var(--text-dark); border-radius: 50%; display: flex; justify-content: center; align-items: center; margin-bottom: 12px;"><i class="ti ti-file-report" style="margin:0; font-size: 20px;"></i></div>
-                    <p class="label">My Reports</p>
-                    <p class="value" id="stat_total" style="color: var(--text-dark);">0</p>
-                </div>
-                <div class="stat-card dark">
-                    <div style="width: 40px; height: 40px; background: rgba(255,255,255,0.1); color: var(--card-white); border-radius: 50%; display: flex; justify-content: center; align-items: center; margin-bottom: 12px;"><i class="ti ti-check" style="margin:0; font-size: 20px;"></i></div>
-                    <p class="label">Resolved</p>
-                    <p class="value" id="stat_resolved">0</p>
-                </div>
-            </div>
-            
-            <button class="btn-primary" onclick="switchTab('report')">
-                <i class="ti ti-plus"></i> Report a waste issue
-            </button>
- 
-            <h3 class="section-title">Community Map</h3>
-            <div class="card" style="padding: 0; overflow: hidden; border-radius: 32px;">
-                <div id="communityMap" style="height: 350px; width: 100%; z-index: 1;"></div>
-            </div>
+
+        <!-- MAP SECTION -->
+        <div class="section-header">
+            <h3>Community Map</h3>
+            <a href="#" onclick="switchTab('feed')">See All</a>
+        </div>
+
+        <div class="card map-card">
+            <div id="communityMap"></div>
         </div>
     </div>
- 
+
     <!-- 🌟 COMMUNITY FEED SECTION -->
     <div id="section-feed" class="content-section">
         <div class="top-bar">
             <h2>Community Feed</h2>
             <p>See how we are keeping Tanza clean</p>
         </div>
-        <div class="body-container" id="feed_container" style="padding-top: 10px;">
-            <div class="card text-center" style="padding: 40px 20px; text-align:center;">
-                <i class="ti ti-sparkles" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
-                <p class="card-title" style="color: #666; font-size: 16px;">Loading Clean-ups...</p>
-            </div>
-        </div>
+        <div class="body-container" id="feed_container"></div>
     </div>
- 
+
     <!-- 📷 REPORT SECTION -->
     <div id="section-report" class="content-section">
         <div class="top-bar">
             <h2>Report Waste</h2>
             <p>Help keep our coastlines clean.</p>
         </div>
-        
-        <div class="body-container">
-            <div style="background:var(--card-white); border-radius:20px; padding:16px; margin-bottom:24px; display:flex; gap:12px; align-items:center; border: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02);">
-                <i class="ti ti-wifi-off" style="color:var(--text-gray);font-size:24px;"></i>
-                <p style="font-size:14px;color:var(--text-gray);margin:0;font-weight:500;">Offline? This saves locally and syncs automatically.</p>
-            </div>
- 
+
+        <div class="body-container" style="padding-top: 20px;">
             <form id="offlineReportForm">
-                <label class="input-label">Description</label>
-                <textarea id="description" class="input-field" rows="3" placeholder="Describe the waste issue..." required></textarea>
- 
-                <label class="input-label">Photo Evidence</label>
-                <div style="display: flex; gap: 12px; margin-bottom: 16px;">
-                    <button type="button" id="openCameraBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-camera"></i> Camera</button>
-                    <button type="button" id="openGalleryBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-photo"></i> Gallery</button>
+
+                <div class="card">
+                    <label class="input-label">Type of Waste</label>
+                    <select id="wasteType" class="input-field" required>
+                        <option value="" disabled selected>Select waste type...</option>
+                        <option value="Plastic">Plastic</option>
+                        <option value="Organic / Biodegradable">Organic / Biodegradable</option>
+                        <option value="Paper / Cardboard">Paper / Cardboard</option>
+                        <option value="Metal">Metal</option>
+                        <option value="Glass">Glass</option>
+                        <option value="Hazardous / Medical">Hazardous / Medical</option>
+                        <option value="Other">Other (Please specify)</option>
+                    </select>
+                    <input type="text" id="customWasteType" class="input-field" placeholder="Enter custom waste type..." style="display: none; margin-top: 10px;">
                 </div>
-                <img id="photoPreview" src="" alt="Photo preview" style="display:none; width:100%; max-height:250px; object-fit:cover; border-radius:24px; margin-bottom:24px;">
- 
-                <label class="input-label">Location</label>
-                <button type="button" id="getLocationBtn" class="btn-outline"><i class="ti ti-current-location"></i> Auto-Detect My Location</button>
-                <button type="button" id="toggleManualMapBtn" class="btn-outline"><i class="ti ti-map-pin"></i> Pin Manually on Map</button>
-                
-                <div id="location_status" class="status-chip"><i class="ti ti-alert-circle"></i> Not pinned yet.</div>
-                
-                <div id="manualMapContainer" style="display: none; margin-bottom: 24px;">
-                    <p style="font-size: 14px; color: var(--text-gray); font-weight: 500; margin: 0 0 12px; text-align: center;">Tap anywhere to drop pin</p>
-                    <div class="card" style="padding: 0; overflow: hidden; border-radius: 28px; border: 4px solid var(--text-dark);">
-                        <div id="reportPinMap" style="height: 300px; width: 100%; z-index: 1;"></div>
+
+                <div class="card">
+                    <label class="input-label">Exact Location</label>
+                    <textarea id="exactLocation" class="input-field" rows="3" placeholder="Describe the exact location (e.g., near the blue gate, behind the sari-sari store)..." required></textarea>
+                </div>
+
+                <div class="card">
+                    <label class="input-label">Photo Evidence</label>
+                    <div style="display: flex; gap: 12px;">
+                        <button type="button" id="openCameraBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-camera"></i> Camera</button>
+                        <button type="button" id="openGalleryBtn" class="btn-outline" style="flex: 1; margin: 0;"><i class="ti ti-photo"></i> Gallery</button>
                     </div>
+                    <img id="photoPreview" src="" alt="Photo preview" style="display:none; width:100%; max-height:250px; object-fit:cover; border-radius:14px; margin-top:14px;">
                 </div>
-                
-                <input type="hidden" id="lat" required>
-                <input type="hidden" id="lng" required>
- 
+
+                <div class="card">
+                    <label class="input-label">Location</label>
+                    <button type="button" id="getLocationBtn" class="btn-outline"><i class="ti ti-current-location"></i> Auto-Detect My Location</button>
+                    <button type="button" id="toggleManualMapBtn" class="btn-outline"><i class="ti ti-map-pin"></i> Pin Manually on Map</button>
+
+                    <div id="location_status" class="status-chip"><i class="ti ti-alert-circle"></i> Not pinned yet.</div>
+
+                    <div id="manualMapContainer" style="display: none; margin-top: 16px;">
+                        <p style="font-size: 13px; color: var(--text-muted); font-weight: 500; margin: 0 0 12px; text-align: center;">Tap anywhere to drop pin</p>
+                        <div class="card map-card" style="margin: 0; border: 2px solid var(--primary);">
+                            <div id="reportPinMap"></div>
+                        </div>
+                    </div>
+
+                    <input type="hidden" id="lat" required>
+                    <input type="hidden" id="lng" required>
+                </div>
+
                 <button type="submit" id="submit_btn" class="btn-primary" disabled><i class="ti ti-send"></i> Submit Report</button>
             </form>
         </div>
     </div>
- 
+
     <!-- 📝 HISTORY SECTION -->
     <div id="section-history" class="content-section">
         <div class="top-bar">
             <h2>My Reports</h2>
             <p>Track your submitted waste reports.</p>
         </div>
-        <div class="body-container" id="history_container">
-            <div class="card text-center" style="padding: 40px 20px; text-align:center;">
-                <i class="ti ti-clipboard-list" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
-                <p class="card-title" style="color: #666; font-size: 16px;">Loading reports...</p>
-            </div>
-        </div>
+        <div class="body-container" id="history_container"></div>
     </div>
- 
+
     <!-- 👤 PROFILE SECTION -->
     <div id="section-profile" class="content-section">
-        <div class="top-bar" style="text-align:center;padding-bottom:10px;">
-            <div id="profile_top_avatar_box" style="width:110px;height:110px;border-radius:50%;background:var(--card-white);color:var(--text-dark);display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:600;margin:0 auto 16px;overflow:hidden;box-shadow:0 8px 25px rgba(0,0,0,0.05);">
+        <div class="top-bar profile-top">
+            <div id="profile_top_avatar_box">
                 <span id="profile_top_initials">CL</span>
                 <img id="profile_top_img" src="" alt="Profile Picture" style="width:100%;height:100%;object-fit:cover;display:none;">
             </div>
-            <h2 id="profile_top_name" style="margin:0; font-size: 28px; font-weight: 700;">Citizen</h2>
+            <h2 id="profile_top_name">Citizen</h2>
             <p>Barangay Tanza · Resident</p>
         </div>
 
         <div class="body-container">
             <h3 class="section-title">Account Settings</h3>
-            <div class="card" style="padding: 12px 24px;">
-                <div onclick="openEditProfileModal()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
-                    <span style="font-size:16px;color:var(--text-dark);font-weight:600;"><i class="ti ti-edit" style="font-size:22px;vertical-align:-5px;margin-right:12px;color:var(--text-gray);"></i>Edit Profile</span>
-                    <i class="ti ti-chevron-right" style="color:#ccc;font-size:20px;"></i>
+            <div class="card menu-card">
+                <div class="menu-row" onclick="openEditProfileModal()">
+                    <span class="menu-left"><span class="menu-icon"><i class="ti ti-edit"></i></span>Edit Profile</span>
+                    <i class="ti ti-chevron-right"></i>
                 </div>
-                <div style="height: 1px; background: var(--border-light); margin: 0;"></div>
-                <div onclick="logoutUser()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
-                    <span style="font-size:16px;color:#EF4444;font-weight:600;"><i class="ti ti-logout" style="font-size:22px;vertical-align:-5px;margin-right:12px;"></i>Log out</span>
+                <div class="menu-row" onclick="logoutUser()">
+                    <span class="menu-left danger"><span class="menu-icon red"><i class="ti ti-logout"></i></span>Log out</span>
                 </div>
             </div>
 
-            <h3 class="section-title" style="margin-top: 30px;">Information</h3>
-            <div class="card" style="padding: 12px 24px;">
-                <div onclick="openEmergencyModal()" style="display:flex;align-items:center;justify-content:space-between;padding:16px 0; cursor: pointer;">
-                    <span style="font-size:16px;color:var(--text-dark);font-weight:600;"><i class="ti ti-phone-call" style="font-size:22px;vertical-align:-5px;margin-right:12px;color:#EF4444;"></i>Emergency & Brgy Info</span>
-                    <i class="ti ti-chevron-right" style="color:#ccc;font-size:20px;"></i>
+            <h3 class="section-title">Information</h3>
+            <div class="card menu-card">
+                <div class="menu-row" onclick="openEmergencyModal()">
+                    <span class="menu-left"><span class="menu-icon red"><i class="ti ti-phone-call"></i></span>Emergency &amp; Brgy Info</span>
+                    <i class="ti ti-chevron-right"></i>
                 </div>
             </div>
         </div>
     </div>
 
-    <!-- 🚨 ALERTS MODAL (Moved to root level for global visibility) -->
+    <!-- 🚨 ALERTS MODAL -->
     <div id="alertsModal" class="modal-overlay" style="display:none; z-index: 2600;">
         <div class="modal-content" style="max-height: 80vh; display: flex; flex-direction: column;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 24px;">
-                <h3 style="margin:0; color:var(--text-dark); font-size: 22px; font-weight: 600; letter-spacing: -0.5px;">Community Alerts</h3>
-                <button type="button" onclick="closeAlertsModal()" style="background: var(--card-white); border: none; border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                    <i class="ti ti-x" style="font-size:20px; color:var(--text-dark);"></i>
-                </button>
+            <div class="modal-header">
+                <h3>Community Alerts</h3>
+                <button type="button" class="icon-btn" onclick="closeAlertsModal()"><i class="ti ti-x"></i></button>
             </div>
             <div id="alertsContainer" style="overflow-y: auto; padding-right: 5px;">
-                <p style="text-align: center; color: var(--text-gray); font-weight: 500;">Loading alerts...</p>
             </div>
         </div>
     </div>
- 
+
     <!-- 📄 REPORT DETAILS MODAL -->
     <div id="reportModal" class="modal-overlay" style="display:none;">
         <div class="modal-content">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 24px;">
-                <h3 style="margin:0; color:var(--text-dark); font-size: 22px; font-weight: 600; letter-spacing: -0.5px;">Report Details</h3>
-                <div onclick="closeReportModal()" style="background: var(--card-white); border-radius: 50%; width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 10px rgba(0,0,0,0.05);">
-                    <i class="ti ti-x" style="font-size:20px; color:var(--text-dark);"></i>
-                </div>
+            <div class="modal-header">
+                <h3>Report Details</h3>
+                <div class="icon-btn" onclick="closeReportModal()"><i class="ti ti-x"></i></div>
             </div>
-            
-            <div id="modalImageContainer" style="display:flex; gap:12px; margin-bottom:24px; width:100%;">
+
+            <div id="modalImageContainer" class="photo-pair">
                 <div id="beforePhotoContainer" style="flex:1;">
-                    <p style="font-size:13px; font-weight:600; margin:0 0 8px; color:var(--text-gray);">Before</p>
-                    <img id="modalImageBefore" src="" alt="Before cleanup" style="width:100%; height:160px; object-fit:cover; border-radius:24px;">
+                    <p>Before</p>
+                    <img id="modalImageBefore" src="" alt="Before">
                 </div>
                 <div id="afterPhotoContainer" style="flex:1; display:none;">
-                    <p style="font-size:13px; font-weight:600; margin:0 0 8px; color:#10B981;">After</p>
-                    <img id="modalImageAfter" src="" alt="After cleanup" style="width:100%; height:160px; object-fit:cover; border-radius:24px;">
+                    <p style="color: var(--primary-dark);">After</p>
+                    <img id="modalImageAfter" src="" alt="After">
                 </div>
             </div>
-            
-            <div style="background: var(--card-white); border-radius: 24px; padding: 20px;">
-                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Reporter:</strong> <span id="modalName" style="color:var(--text-gray); float: right;"></span></p>
-                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Date:</strong> <span id="modalDate" style="color:var(--text-gray); float: right;"></span></p>
-                <p style="margin: 0 0 12px; font-size: 15px;"><strong>Status:</strong> <span id="modalStatus" class="badge" style="float: right;"></span></p>
-                <p style="margin: 0; font-size: 15px;"><strong>Location:</strong> <span id="modalLocation" style="float: right;"></span></p>
+
+            <div class="detail-box">
+                <div class="detail-row"><span class="detail-key">Reporter</span><span id="modalName"></span></div>
+                <div class="detail-row"><span class="detail-key">Date</span><span id="modalDate"></span></div>
+                <div class="detail-row"><span class="detail-key">Status</span><span id="modalStatus" class="badge"></span></div>
+                <div class="detail-row"><span class="detail-key">Location</span><span id="modalLocation"></span></div>
             </div>
-            
-            <div style="background:var(--card-white); padding:20px; border-radius:24px; margin-top:16px;">
-                <p style="margin:0; font-size:14px; font-weight: 600; color:var(--text-dark);">Description</p>
-                <p id="modalDesc" style="color:var(--text-gray); font-size: 15px; margin: 8px 0 0; line-height: 1.5;"></p>
+
+            <div class="desc-box">
+                <p class="desc-title">Description</p>
+                <p id="modalDesc"></p>
             </div>
+
+            <button type="button" id="editReportBtn" class="btn-outline" style="display:none; margin: 16px 0 0;" onclick="openEditReportModal()"><i class="ti ti-edit"></i> Edit Report</button>
         </div>
     </div>
- 
+
     <!-- ✏️ EDIT PROFILE MODAL -->
-    <div id="editProfileModal" class="modal-overlay" style="display:none; z-index: 2500; padding: 0; background: var(--bg-color);">
-        <div class="modal-content" style="width: 100%; height: 100%; max-width: none; max-height: none; border-radius: 0; padding: 40px 24px 100px; box-sizing: border-box; overflow-y: auto; background: var(--bg-color); box-shadow: none;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 40px;">
-                <h3 style="margin:0; color:var(--text-dark); font-size: 28px; font-weight: 700; letter-spacing: -0.5px;">Edit Profile</h3>
-                <button type="button" onclick="closeEditProfileModal()" style="background: var(--card-white); border: none; border-radius: 50%; width: 48px; height: 48px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
-                    <i class="ti ti-x" style="font-size:24px; color:var(--text-dark);"></i>
-                </button>
+    <div id="editProfileModal" class="modal-overlay" style="display:none; z-index: 2500;">
+        <div class="modal-content">
+            <div class="modal-header" style="margin-bottom: 28px;">
+                <h3 style="font-size: 22px;">Edit Profile</h3>
+                <button type="button" class="icon-btn" style="background:#fff; box-shadow: var(--shadow-sm);" onclick="closeEditProfileModal()"><i class="ti ti-x"></i></button>
             </div>
-            <div style="text-align: center; margin-bottom: 40px;">
-                <div style="position: relative; display: inline-block;">
-                    <img id="editProfilePreview" src="https://placehold.co/120x120/e0e0e0/a0a0a0?text=Photo" alt="Profile preview" style="width: 130px; height: 130px; border-radius: 50%; object-fit: cover; border: 4px solid var(--card-white); box-shadow: 0 8px 25px rgba(0,0,0,0.08);">
-                    <button type="button" id="changeProfilePicBtn" style="position: absolute; bottom: 0; right: 0; background: var(--text-dark); color: var(--card-white); border: none; border-radius: 50%; width: 44px; height: 44px; cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 15px rgba(33,37,41,0.2);">
-                        <i class="ti ti-camera" style="font-size: 20px;"></i>
+            <div class="edit-avatar-wrap">
+                <div class="edit-avatar-inner">
+                    <img id="editProfilePreview" src="https://placehold.co/100x100/e5e7eb/a1a1aa?text=Photo">
+                    <button type="button" id="changeProfilePicBtn">
+                        <i class="ti ti-camera" style="font-size: 16px;"></i>
                     </button>
                 </div>
             </div>
             <form id="editProfileForm">
-                <label class="input-label">Full Name</label>
-                <input type="text" id="edit_fullname" class="input-field" placeholder="e.g. Juan Dela Cruz">
-                
-                <label class="input-label">Username</label>
-                <input type="text" id="edit_username" class="input-field" placeholder="Username">
-                
-                <label class="input-label">New Password <span style="font-size: 13px; font-weight: normal; color: var(--text-gray);">(Optional)</span></label>
-                <input type="password" id="edit_password" class="input-field" placeholder="••••••••">
-                
-                <label class="input-label">Phone Number</label>
-                <input type="tel" id="edit_phone" class="input-field" placeholder="09xxxxxxxxx">
-                
-                <label class="input-label">Date of Birth</label>
-                <input type="date" id="edit_dob" class="input-field">
-                
-                <label class="input-label">Address</label>
-                <input type="text" id="edit_address" class="input-field" placeholder="e.g. Sitio Gulod, Purok 2">
-                
-                <button type="submit" class="btn-primary" style="margin-top: 10px;">
-                    Save Profile Changes
-                </button>
+                <label class="input-label">Full Name</label><input type="text" id="edit_fullname" class="input-field">
+                <label class="input-label">Username</label><input type="text" id="edit_username" class="input-field">
+                <label class="input-label">New Password (Optional)</label><input type="password" id="edit_password" class="input-field">
+                <label class="input-label">Phone Number</label><input type="tel" id="edit_phone" class="input-field">
+                <label class="input-label">Date of Birth</label><input type="date" id="edit_dob" class="input-field">
+                <label class="input-label">Address</label><input type="text" id="edit_address" class="input-field">
+                <button type="submit" class="btn-primary" style="margin-top: 10px;">Save Profile Changes</button>
             </form>
         </div>
     </div>
- 
+
+    <!-- ✏️ EDIT REPORT MODAL -->
+    <style>
+        .edit-spin { display: inline-block; animation: editSpin 0.9s linear infinite; }
+        @keyframes editSpin { to { transform: rotate(360deg); } }
+    </style>
+    <div id="editReportModal" class="modal-overlay" style="display:none; z-index: 2500;">
+        <div class="modal-content" style="max-height: 92vh; overflow-y: auto;">
+            <div class="modal-header">
+                <h3 style="font-size: 22px;">Edit Report</h3>
+                <button type="button" class="icon-btn" aria-label="Close" onclick="closeEditReportModal()"><i class="ti ti-x"></i></button>
+            </div>
+            <p style="margin: -8px 0 18px; font-size: 13px; color: var(--text-muted); line-height: 1.5;">You can change this report until the barangay starts handling it.</p>
+
+            <form id="editReportForm">
+                <label class="input-label">Photo</label>
+                <img id="editReportPhoto" src="" alt="Report photo" style="width: 100%; height: 170px; object-fit: cover; border-radius: 16px; border: 1px solid var(--border-color); margin-bottom: 12px; background: var(--bg-body);">
+                <div style="display: flex; gap: 10px;">
+                    <button type="button" id="editReportCameraBtn" class="btn-outline" style="flex: 1;"><i class="ti ti-camera"></i> Camera</button>
+                    <button type="button" id="editReportGalleryBtn" class="btn-outline" style="flex: 1;"><i class="ti ti-photo"></i> Gallery</button>
+                </div>
+
+                <label class="input-label" for="editReportDesc" style="margin-top: 6px;">Description</label>
+                <textarea id="editReportDesc" class="input-field" rows="4" maxlength="500" placeholder="Describe the problem"></textarea>
+                <div id="editReportCount" style="text-align: right; font-size: 12px; font-weight: 600; color: var(--text-muted); margin: -6px 2px 14px;">0 / 500</div>
+
+                <label class="input-label">Location</label>
+                <div id="editReportLocStatus" class="status-chip"><i class="ti ti-map-pin"></i> Current pin</div>
+                <div style="display: flex; gap: 10px; margin-top: 12px;">
+                    <button type="button" id="editReportGpsBtn" class="btn-outline" style="flex: 1; margin-bottom: 0;"><i class="ti ti-current-location"></i> Use GPS</button>
+                    <button type="button" id="editReportMapBtn" class="btn-outline" style="flex: 1; margin-bottom: 0;"><i class="ti ti-map-pin"></i> Move Pin on Map</button>
+                </div>
+                <div id="editReportMapBox" style="display: none; margin-top: 14px;">
+                    <p style="font-size: 13px; color: var(--text-muted); font-weight: 500; margin: 0 0 10px; text-align: center;">Tap anywhere to move the pin</p>
+                    <div id="editReportMap" style="height: 240px; border-radius: 16px; border: 2px solid var(--primary); overflow: hidden;"></div>
+                </div>
+
+                <div id="editReportError" role="alert" style="display: none; margin-top: 16px; background: var(--red-light); color: var(--red-dark); border-radius: 14px; padding: 12px 14px; font-size: 13px; font-weight: 600; line-height: 1.45;"></div>
+
+                <button type="submit" id="editReportSaveBtn" class="btn-primary" style="margin-top: 20px;"><i class="ti ti-device-floppy"></i> Save Changes</button>
+                <button type="button" class="btn-outline" style="margin: 12px 0 0; border-color: transparent; box-shadow: none; color: var(--text-muted);" onclick="closeEditReportModal()">Cancel</button>
+            </form>
+        </div>
+    </div>
+
     <!-- ☎️ EMERGENCY INFO MODAL -->
     <div id="emergencyModal" class="modal-overlay" style="display:none; z-index: 2600;">
         <div class="modal-content" style="max-height: 90vh; overflow-y: auto;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 20px;">
-                <h3 style="margin:0; color:var(--text-dark); font-size: 22px; font-weight: 600; letter-spacing: -0.5px;">Emergency Info</h3>
-                <button type="button" onclick="closeEmergencyModal()" style="background: var(--card-white); border: none; border-radius: 50%; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 15px rgba(0,0,0,0.05);">
-                    <i class="ti ti-x" style="font-size:22px; color:var(--text-dark);"></i>
-                </button>
+            <div class="modal-header">
+                <h3>Emergency Info</h3>
+                <button type="button" class="icon-btn" onclick="closeEmergencyModal()"><i class="ti ti-x"></i></button>
             </div>
-            
-            <div id="dynamicEmergencyContainer">
-                <div style="text-align: center; padding: 30px; color: var(--text-gray);">
-                    <i class="ti ti-loader" style="font-size: 24px;"></i>
-                    <p>Loading hotlines...</p>
-                </div>
-            </div>
+            <div id="dynamicEmergencyContainer"></div>
         </div>
     </div>
 
     <!-- 📱 FLOATING PILL NAVIGATION BAR -->
     <div class="nav-bar">
-        <a href="#" class="nav-item active" id="nav-home" onclick="switchTab('home')">
-            <i class="ti ti-home"></i><span>Home</span>
-        </a>
-        <a href="#" class="nav-item" id="nav-feed" onclick="switchTab('feed')">
-            <i class="ti ti-sparkles"></i><span>Feed</span>
-        </a>
-        <a href="#" class="nav-item" id="nav-report" onclick="switchTab('report')">
-            <i class="ti ti-camera"></i><span>Report</span>
-        </a>
-        <a href="#" class="nav-item" id="nav-history" onclick="switchTab('history')">
-            <i class="ti ti-clipboard-list"></i><span>History</span>
-        </a>
-        <a href="#" class="nav-item" id="nav-profile" onclick="switchTab('profile')">
-            <i class="ti ti-user"></i><span>Profile</span>
-        </a>
+        <a href="#" class="nav-item active" id="nav-home" onclick="switchTab('home')"><i class="ti ti-home"></i><span>Home</span></a>
+        <a href="#" class="nav-item" id="nav-feed" onclick="switchTab('feed')"><i class="ti ti-sparkles"></i><span>Feed</span></a>
+        <a href="#" class="nav-item" id="nav-report" onclick="switchTab('report')"><i class="ti ti-camera"></i><span>Report</span></a>
+        <a href="#" class="nav-item" id="nav-history" onclick="switchTab('history')"><i class="ti ti-clipboard-list"></i><span>History</span></a>
+        <a href="#" class="nav-item" id="nav-profile" onclick="switchTab('profile')"><i class="ti ti-user"></i><span>Profile</span></a>
     </div>
 
-    <!-- Core App JS (loaded before inline scripts execution) -->
+    <!-- Core App JS -->
     <script src="js/app.js"></script>
+    <script src="js/edit_report.js"></script>
 
     <!-- Pull-To-Refresh Library -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pulltorefreshjs/0.1.22/index.umd.min.js"></script>
 
     <script>
         function switchTab(tabName) {
-            document.querySelectorAll('.content-section').forEach(section => {
-                section.style.display = 'none';
-            });
-            document.querySelectorAll('.nav-item').forEach(item => {
-                item.classList.remove('active');
-            });
+            document.querySelectorAll('.content-section').forEach(section => section.style.display = 'none');
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
  
             document.getElementById('section-' + tabName).style.display = 'block';
             document.getElementById('nav-' + tabName).classList.add('active');
@@ -502,289 +831,31 @@
                 } else {
                     setTimeout(() => { communityMap.invalidateSize(); }, 300); 
                 }
-                if (typeof loadDashboardStats === 'function') {
-                    setTimeout(loadDashboardStats, 300);
-                }
+                if (typeof loadDashboardStats === 'function') requestAnimationFrame(loadDashboardStats);
+                if (typeof loadHomeProfile === 'function') loadHomeProfile();
             }
  
             if (tabName === 'history' && typeof loadHistory === 'function') {
-                setTimeout(loadHistory, 300);
+                if (typeof showSkeleton === 'function') showSkeleton(document.getElementById('history_container'), 'history', 4);
+                requestAnimationFrame(loadHistory);   // starts right away (the tab has already painted)
             }
-
             if (tabName === 'feed' && typeof loadCommunityFeed === 'function') {
-                setTimeout(loadCommunityFeed, 300);
+                if (typeof showSkeleton === 'function') showSkeleton(document.getElementById('feed_container'), 'feed', 3);
+                requestAnimationFrame(loadCommunityFeed);
             }
-
-            if (tabName === 'profile' && typeof loadProfileDisplay === 'function') {
-                loadProfileDisplay();
-            }
+            if (tabName === 'profile' && typeof loadProfileDisplay === 'function') loadProfileDisplay();
         }
- 
+
         function markLocationPinned(isPinned) {
             const chip = document.getElementById('location_status');
             if (!chip) return;
             chip.classList.toggle('is-pinned', !!isPinned);
         }
 
-        function openEmergencyModal() {
-            document.getElementById('emergencyModal').style.display = 'flex';
-            loadDynamicEmergencyInfo();
-        }
-        
-        function openAlertsModal() {
-            document.getElementById('alertsModal').style.display = 'flex';
-            fetchAlerts();
-        }
-
-        function closeAlertsModal() {
-            document.getElementById('alertsModal').style.display = 'none';
-        }
-
-const API_BASE_URL = 'https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch'; 
-
-async function fetchAlerts() {
-    let container = document.getElementById('alertsContainer');
-    container.innerHTML = '<div style="text-align: center; padding: 30px; color: var(--text-gray);"><i class="ti ti-loader" style="font-size: 24px; margin-bottom: 8px; display: block;"></i>Loading alerts...</div>';
-    
-    try {
-        let response = await fetch(`${API_BASE_URL}/api_get_alerts.php`, { 
-            method: 'GET',
-            headers: { 'ngrok-skip-browser-warning': 'true' }
-        });
-        
-        let rawData = await response.text(); 
-        
-        try {
-            let alerts = JSON.parse(rawData); 
-            
-            if (alerts.error) {
-                container.innerHTML = `<p style="color: #F87171; font-weight: 600; padding: 20px; text-align: center;">DB Error: ${alerts.error}</p>`;
-                return;
-            }
-            
-            container.innerHTML = '';
-            
-            if (alerts.length === 0) {
-                container.innerHTML = `
-                    <div class="card text-center" style="padding: 40px 20px; box-shadow: none; border: 1px solid var(--border-light);">
-                        <i class="ti ti-bell-z" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
-                        <p style="color: var(--text-gray); font-size: 15px; margin: 0;">No new alerts right now.</p>
-                    </div>`;
-                return;
-            }
-
-            // --- NEW UNREAD LOGIC ---
-            // Find the highest alert_id from the fetched data
-            let highestId = Math.max(...alerts.map(a => parseInt(a.alert_id)));
-            
-            // Save this ID to the phone's local storage so it remembers what was read
-            localStorage.setItem('last_seen_alert_id', highestId);
-            
-            // Instantly hide the red badge since they are now viewing the alerts
-            const badge = document.getElementById('unreadBadge');
-            if (badge) badge.style.display = 'none';
-            // -------------------------
-
-            alerts.forEach(alert => {
-                container.innerHTML += `
-                    <div style="background: #FCE8E8; border-left: 4px solid #F87171; padding: 16px; border-radius: 12px; margin-bottom: 12px;">
-                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
-                            <strong style="color: #B91C1C; font-size: 15px;">📢 ${alert.purok_area}</strong>
-                            <span style="font-size: 12px; color: #EF4444; font-weight: 600;">${alert.time_ago}</span>
-                        </div>
-                        <p style="margin: 0; font-size: 14px; color: var(--text-dark); line-height: 1.5;">${alert.message}</p>
-                    </div>`;
-            });
-            
-        } catch (jsonError) {
-            console.error("Server output was not JSON:", rawData);
-            container.innerHTML = `<p style="text-align: center; color: #F87171;">Server Error: ${rawData.substring(0, 50)}</p>`;
-        }
-    } catch (error) {
-        container.innerHTML = `<p style="text-align: center; color: #F87171; font-weight: 500; padding: 20px;">Fetch failed: ${error.message}</p>`;
-    }
-}
-
-async function checkUnreadAlerts() {
-    try {
-        let response = await fetch(`${API_BASE_URL}/api_get_alerts.php`, {
-            method: 'GET',
-            headers: { 'ngrok-skip-browser-warning': 'true' }
-        });
-        
-        let alerts = await response.json();
-        
-        if (alerts.length > 0 && !alerts.error) {
-            // Find the newest alert_id from the database
-            let highestDatabaseId = Math.max(...alerts.map(a => parseInt(a.alert_id)));
-            
-            // Get the alert_id the user last looked at (defaults to 0 if they've never opened it)
-            let lastSeenId = parseInt(localStorage.getItem('last_seen_alert_id')) || 0;
-            
-            // ONLY show the red badge if the database has a newer alert than what they've seen
-            if (highestDatabaseId > lastSeenId) {
-                const badge = document.getElementById('unreadBadge');
-                if (badge) badge.style.display = 'block';
-            }
-        }
-    } catch (error) {
-        console.log("Could not check alerts in background", error);
-    }
-}
-
-// Call this function when the app starts
-document.addEventListener('DOMContentLoaded', () => {
-    checkUnreadAlerts();
-});
-
-// Check for alerts silently in the background when the app loads to trigger the red badge
-async function checkUnreadAlerts() {
-    try {
-        let response = await fetch(`${API_BASE_URL}/api_get_alerts.php`, {
-            method: 'GET',
-            headers: { 'ngrok-skip-browser-warning': 'true' }
-        });
-        let alerts = await response.json();
-        
-        // If there are alerts in the database, light up the badge
-        if (alerts.length > 0) {
-            document.getElementById('unreadBadge').style.display = 'block';
-        }
-    } catch (error) {
-        console.log("Could not check alerts in background", error);
-    }
-}
-
-// Call this function when the app starts
-document.addEventListener('DOMContentLoaded', () => {
-    checkUnreadAlerts();
-});
-
-        function closeEmergencyModal() {
-            document.getElementById('emergencyModal').style.display = 'none';
-        }
-
-        async function loadDynamicEmergencyInfo() {
-            const container = document.getElementById('dynamicEmergencyContainer');
-            
-            try {
-                // Use relative path instead of hardcoded dev domain
-                let response = await fetch(`${API_BASE_URL}/api_get_barangay_info.php`, { 
-    method: 'GET',
-    headers: { 'ngrok-skip-browser-warning': 'true' }
-});
-                let result = await response.json();
-                
-                if (result.status === 'success') {
-                    let info = result.data;
-                    let html = '';
-
-                    html += `<div style="margin-bottom: 24px;">
-                                <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px;">
-                                    <div style="background: #FEE2E2; color: #DC2626; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px;">🚨</div>
-                                    <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #1A1A1A; letter-spacing: -0.3px;">Emergency Hotlines</h4>
-                                </div>`;
-                    
-                    if (info.pnp_hotline) {
-                        html += `<a href="tel:${info.pnp_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
-                                    <div style="display: flex; align-items: center; gap: 14px;">
-                                        <div style="background: #EFF6FF; color: #3B82F6; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-shield"></i></div>
-                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">PNP Station Hotline</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.pnp_hotline}</strong></div>
-                                    </div>
-                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
-                                 </a>`;
-                    }
-                    if (info.bfp_hotline) {
-                        html += `<a href="tel:${info.bfp_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
-                                    <div style="display: flex; align-items: center; gap: 14px;">
-                                        <div style="background: #FEF2F2; color: #EF4444; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-flame"></i></div>
-                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">BFP Fire Station Hotline</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.bfp_hotline}</strong></div>
-                                    </div>
-                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
-                                 </a>`;
-                    }
-                    if (info.mdrrmo_hotline) {
-                        html += `<a href="tel:${info.mdrrmo_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
-                                    <div style="display: flex; align-items: center; gap: 14px;">
-                                        <div style="background: #F0FDF4; color: #22C55E; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-ambulance"></i></div>
-                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">MDRRMO / Disaster Hotline</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.mdrrmo_hotline}</strong></div>
-                                    </div>
-                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
-                                 </a>`;
-                    }
-                    if (info.health_center_hotline) {
-                        html += `<a href="tel:${info.health_center_hotline}" style="display: flex; justify-content: space-between; align-items: center; background: #ffffff; padding: 16px 20px; border-radius: 20px; text-decoration: none; box-shadow: 0 4px 15px rgba(0,0,0,0.02); margin-bottom: 12px; border: 1px solid #F3F4F6;">
-                                    <div style="display: flex; align-items: center; gap: 14px;">
-                                        <div style="background: #FAF5FF; color: #A855F7; width: 44px; height: 44px; border-radius: 14px; display: flex; align-items: center; justify-content: center; font-size: 20px;"><i class="ti ti-activity"></i></div>
-                                        <div><span style="display: block; font-size: 11px; color: #8E8E93; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">Health Center</span><strong style="color: #1A1A1A; font-size: 16px; font-weight: 600;">${info.health_center_hotline}</strong></div>
-                                    </div>
-                                    <div style="background: #212529; color: #D9FA4A; width: 38px; height: 38px; border-radius: 50%; display: flex; justify-content: center; align-items: center; font-size: 16px;"><i class="ti ti-phone"></i></div>
-                                 </a>`;
-                    }
-                    html += `</div>`;
-
-                    html += `<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 14px;">
-                                <div style="background: #E0E7FF; color: #4F46E5; width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 16px;">🏛️</div>
-                                <h4 style="margin: 0; font-size: 16px; font-weight: 700; color: #1A1A1A; letter-spacing: -0.3px;">Barangay Office</h4>
-                             </div>
-                             
-                             <div style="background: #ffffff; border-radius: 24px; padding: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.02); border: 1px solid #F3F4F6;">
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
-                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Contact Number</span>
-                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.contact_number || 'N/A'}</strong>
-                                </div>
-                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
-                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Punong Barangay</span>
-                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.captain_name || 'N/A'}</strong>
-                                </div>
-                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
-                                <div style="display: flex; justify-content: space-between; align-items: center; padding: 8px 0;">
-                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500;">Office Hours</span>
-                                    <strong style="color: #1A1A1A; font-size: 15px;">${info.office_hours || 'N/A'}</strong>
-                                </div>
-                                <div style="height: 1px; background: #F3F4F6; margin: 4px 0;"></div>
-                                <div style="padding: 8px 0;">
-                                    <span style="color: #8E8E93; font-size: 14px; font-weight: 500; display: block; margin-bottom: 2px;">Address</span>
-                                    <strong style="color: #1A1A1A; font-size: 14px; line-height: 1.4;">${info.full_address || 'Brgy. Tanza, Estancia, Iloilo'}</strong>
-                                </div>
-                             </div>`;
-
-                    container.innerHTML = html;
-                } else {
-                    container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Failed to load system info.</div>';
-                }
-            } catch (error) {
-                console.error("API Error:", error);
-                container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Please check your internet connection.</div>';
-            }
-        }
-
-        // Initialize Pull-to-Refresh
-        PullToRefresh.init({
-            mainElement: 'body',
-            distThreshold: 60,
-            instructionsPullToRefresh: 'Pull down to refresh',
-            instructionsReleaseToRefresh: 'Release to refresh',
-            instructionsRefreshing: 'Loading...',
-            onRefresh: function (done) {
-                let activeSection = document.querySelector('.content-section[style*="display: block"]');
-                let activeId = activeSection ? activeSection.id : 'section-home';
-
-                if (activeId === 'section-home') {
-                    if (typeof loadDashboardStats === 'function') loadDashboardStats();
-                    if (typeof loadCommunityMap === 'function') loadCommunityMap();
-                } else if (activeId === 'section-feed') {
-                    if (typeof loadCommunityFeed === 'function') loadCommunityFeed();
-                } else if (activeId === 'section-history') {
-                    if (typeof loadHistory === 'function') loadHistory();
-                } else if (activeId === 'section-profile') {
-                    if (typeof loadProfileDisplay === 'function') loadProfileDisplay();
-                }
-
-                setTimeout(function() { done(); }, 1500); 
-            }
-        });
+        function openEmergencyModal() { document.getElementById('emergencyModal').style.display = 'flex'; loadDynamicEmergencyInfo(); }
+        function openAlertsModal() { document.getElementById('alertsModal').style.display = 'flex'; fetchAlerts(); }
+        function closeAlertsModal() { document.getElementById('alertsModal').style.display = 'none'; }
+        function closeEmergencyModal() { document.getElementById('emergencyModal').style.display = 'none'; }
     </script>
 </body>
 </html>
