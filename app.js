@@ -1,8 +1,30 @@
 // www/js/app.js
 // Add this at the top of js/app.js
 const BASE_URL = 'http://192.168.1.50/coastal_land_watch'; // Replace with your IP address or 10.0.2.2
+
+// Single place to change the server address (used by the community feed and the hotlines/home tabs).
+// If you ever define API_BASE_URL somewhere else, that value is kept.
+if (typeof API_BASE_URL === 'undefined') {
+    window.API_BASE_URL = 'https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch';
+}
 // 1. Variable to hold the photo data
 let capturedPhotoBase64 = null;
+
+// Custom Waste Type Dropdown Logic
+const wasteTypeSelect = document.getElementById('wasteType');
+if (wasteTypeSelect) {
+    wasteTypeSelect.addEventListener('change', function() {
+        const customInput = document.getElementById('customWasteType');
+        if (this.value === 'Other') {
+            customInput.style.display = 'block';
+            customInput.required = true;
+        } else {
+            customInput.style.display = 'none';
+            customInput.required = false;
+            customInput.value = '';
+        }
+    });
+}
 
 // 📸 OPEN LIVE CAMERA
 document.getElementById('openCameraBtn').addEventListener('click', async () => {
@@ -127,11 +149,23 @@ document.getElementById('offlineReportForm').addEventListener('submit', async (e
 
     const activeUserId = userSession.user_id || userSession.id;
 
+    const wasteTypeVal = document.getElementById('wasteType').value;
+    const customWasteTypeVal = document.getElementById('customWasteType').value;
+    const finalWasteType = wasteTypeVal === 'Other' ? customWasteTypeVal : wasteTypeVal;
+    const exactLoc = document.getElementById('exactLocation').value;
+
+    if (wasteTypeVal === 'Other' && !customWasteTypeVal.trim()) {
+        alert("Please specify the custom waste type.");
+        submitBtn.disabled = false;
+        submitBtn.innerHTML = '<i class="ti ti-send"></i> Submit Report';
+        return;
+    }
+
     const reportData = {
         id: Date.now(),
         resident_id: activeUserId, 
         user_id: activeUserId,
-        description: document.getElementById('description').value,
+        description: `[Type: ${finalWasteType}] Location: ${exactLoc}`,
         latitude: document.getElementById('lat').value,
         longitude: document.getElementById('lng').value,
         photo: capturedPhotoBase64, 
@@ -142,9 +176,11 @@ document.getElementById('offlineReportForm').addEventListener('submit', async (e
     offlineReports.push(reportData);
     await localforage.setItem('pending_waste_reports', offlineReports);
 
-    alert('Report saved to phone! It will sync automatically when you connect to the internet.');
+    await alert('Report saved to phone! It will sync automatically when you connect to the internet.');
     
     document.getElementById('offlineReportForm').reset();
+    document.getElementById('customWasteType').style.display = 'none';
+    document.getElementById('customWasteType').required = false;
     
     if (reportMarker && reportMap) {
         reportMap.removeLayer(reportMarker);
@@ -237,7 +273,7 @@ async function syncReports() {
     // Unlock the sync process
     isSyncing = false; 
 
-    alert('🎉 SUCCESS! Your reports have successfully synced to the Barangay Cloud!');
+    await alert('🎉 SUCCESS! Your reports have successfully synced to the Barangay Cloud!');
 
     if (typeof loadDashboardStats === 'function') loadDashboardStats();
     if (typeof loadCommunityMap === 'function') loadCommunityMap();
@@ -252,8 +288,17 @@ Capacitor.Plugins.Network.addListener('networkStatusChange', status => {
 
 // 🚪 LOGOUT FUNCTION
 async function logoutUser() {
-    const confirmLogout = confirm("Are you sure you want to log out?");
+    const confirmLogout = (typeof showConfirm === 'function')
+        ? await showConfirm("Are you sure you want to log out?", { title: 'Log out?', confirmText: 'Log out', cancelText: 'Stay', type: 'danger' })
+        : confirm("Are you sure you want to log out?");
     if (confirmLogout) {
+        // Keep this phone's copy of the profile picture so it is still there after the next login
+        try {
+            const sess = await localforage.getItem('user_session');
+            if (sess && sess.profile_pic_data) {
+                await localforage.setItem('profile_pic_' + (sess.user_id || sess.id), sess.profile_pic_data);
+            }
+        } catch (e) { console.error('Could not keep profile picture:', e); }
         await localforage.removeItem('user_session');
         window.location.replace("login.html");
     }
@@ -321,6 +366,7 @@ async function loadDashboardStats() {
 
         // 🚨 FIXED: Safely grabs user_id OR id:
         const userId = userSession.user_id || userSession.id;
+        setStatsLoading(true);
 
         let response = await fetch(`https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_dashboard_stats.php?user_id=${userId}`, {
             method: 'GET',
@@ -337,6 +383,8 @@ async function loadDashboardStats() {
         }
     } catch (error) {
         console.error("Could not load dashboard stats: ", error);
+    } finally {
+        setStatsLoading(false);
     }
 }
 
@@ -351,6 +399,8 @@ async function loadHistory() {
 
         const userId = userSession.user_id || userSession.id;
 
+        showSkeleton(historyContainer, 'history', 4);
+
         let response = await fetch(`https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_history.php?user_id=${userId}`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
@@ -362,7 +412,7 @@ async function loadHistory() {
             result = JSON.parse(rawText);
         } catch (e) {
             alert("PHP Error in History API: \n" + rawText);
-            historyContainer.innerHTML = '<div style="text-align:center; padding: 20px; color: #E53935;">Server error. Check the alert pop-up.</div>';
+            showLoadError(historyContainer, 'Server error. Check the alert pop-up.', loadHistory);
             return;
         }
 
@@ -379,6 +429,7 @@ async function loadHistory() {
                         <p style="font-size: 14px; color: #8e8e93; margin: 0;">Your history will appear here.</p>
                     </div>
                 `;
+                markSkeletonReady(historyContainer);
                 return;
             }
 
@@ -411,11 +462,13 @@ async function loadHistory() {
             });
 
             historyContainer.innerHTML = html;
+            markSkeletonReady(historyContainer);
         } else {
-            historyContainer.innerHTML = `<div style="text-align:center; padding: 20px; color: #E53935;">Database Error: ${result.message}</div>`;
+            showLoadError(historyContainer, 'Database Error: ' + (result.message || 'Could not load your reports.'), loadHistory);
         }
     } catch (error) {
         console.error("Could not load history: ", error);
+        showLoadError(historyContainer, 'Could not load your reports. Check your connection.', loadHistory);
     }
 }
 
@@ -566,12 +619,16 @@ if (editForm) {
 
             if (result.status === 'success') {
                 await localforage.setItem('user_session', result.user);
+                if (result.user && result.user.profile_pic_data) {
+                    await localforage.setItem('profile_pic_' + (result.user.user_id || result.user.id), result.user.profile_pic_data);
+                }
                 
-                alert("🎉 " + result.message);
+                await alert("🎉 " + result.message);
                 closeEditProfileModal();
                 
                 if (typeof loadDashboardStats === 'function') loadDashboardStats();
                 if (typeof loadProfileDisplay === 'function') loadProfileDisplay();
+                if (typeof loadHomeProfile === 'function') loadHomeProfile();
             } else {
                 alert("Database Error: " + result.message);
             }
@@ -707,13 +764,18 @@ async function loadCommunityFeed() {
     if (!feedContainer) return;
 
     try {
+        showSkeleton(feedContainer, 'feed', 3);
+
         // FIX 1: Use API_BASE_URL instead of the hardcoded link so it never breaks when Ngrok restarts
         let response = await fetch(`${API_BASE_URL}/api_get_community_feed.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
 
-        if (!response.ok) return;
+        if (!response.ok) {
+            showLoadError(feedContainer, 'Server Error. Check Ngrok connection.', loadCommunityFeed);
+            return;
+        }
 
         let rawText = await response.text();
         let result;
@@ -721,7 +783,7 @@ async function loadCommunityFeed() {
             result = JSON.parse(rawText);
         } catch (parseError) {
             console.error("Raw PHP Error: ", rawText);
-            feedContainer.innerHTML = `<div style="text-align: center; color: #F87171; padding: 20px;">Server Error. Check Ngrok connection.</div>`;
+            showLoadError(feedContainer, 'Server Error. Check Ngrok connection.', loadCommunityFeed);
             return;
         }
 
@@ -736,6 +798,7 @@ async function loadCommunityFeed() {
                         <p style="font-size: 14px; color: #8e8e93; margin: 0;">Resolved reports will appear here!</p>
                     </div>
                 `;
+                markSkeletonReady(feedContainer);
                 return;
             }
 
@@ -797,10 +860,13 @@ async function loadCommunityFeed() {
             });
 
             feedContainer.innerHTML = html;
+            markSkeletonReady(feedContainer);
+        } else {
+            showLoadError(feedContainer, (result && result.message) || 'Could not load the community feed.', loadCommunityFeed);
         }
     } catch (error) {
         console.error("Could not load community feed: ", error);
-        feedContainer.innerHTML = `<div style="text-align: center; color: #F87171; padding: 20px;">Failed to connect to server.</div>`;
+        showLoadError(feedContainer, 'Failed to connect to server.', loadCommunityFeed);
     }
 }
 // ==========================================
@@ -816,7 +882,7 @@ function escapeHtml(text) {
 
 // Shows/hides the red dot on the bell icon
 function updateAlertBadge(show) {
-    const badge = document.getElementById('alertBadgeDot');
+    const badge = document.getElementById('alertBadgeDot') || document.getElementById('unreadBadge');
     if (badge) badge.style.display = show ? 'block' : 'none';
 }
 
@@ -825,13 +891,10 @@ async function loadAlerts() {
     const container = document.getElementById('alertsContainer');
     if (!container) return;
 
-    container.innerHTML = `<div style="text-align: center; padding: 30px; color: var(--text-gray);">
-                                <i class="ti ti-loader" style="font-size: 24px;"></i>
-                                <p>Loading alerts...</p>
-                            </div>`;
+    showSkeleton(container, 'alerts', 3);
 
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api/api_get_alerts.php', {
+        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_alerts.php', {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -862,6 +925,7 @@ async function loadAlerts() {
             });
 
             container.innerHTML = html;
+            markSkeletonReady(container);
 
             // Remember the newest alert we've now shown, so the badge only lights up for truly new ones
             const newestId = item_id(result.data[0]);
@@ -874,10 +938,11 @@ async function loadAlerts() {
                                         <i class="ti ti-bell-off" style="font-size: 28px;"></i>
                                         <p style="margin-top:8px;">No alerts yet.</p>
                                     </div>`;
+            markSkeletonReady(container);
         }
     } catch (error) {
         console.error("Could not load alerts: ", error);
-        container.innerHTML = '<div style="text-align: center; color: #EF4444; padding: 20px;">Could not load alerts. Check your connection.</div>';
+        showLoadError(container, 'Could not load alerts. Check your connection.', loadAlerts);
     }
 }
 
@@ -885,7 +950,7 @@ async function loadAlerts() {
 // can light up even before the resident taps it
 async function checkForNewAlerts() {
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api/api_get_alerts.php', {
+        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_alerts.php', {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -911,4 +976,210 @@ function item_id(row) {
     if (row.alert_id !== undefined) return row.alert_id;
     if (row.id !== undefined) return row.id;
     return null;
+}
+
+
+// ==========================================
+// 🏠 HOME TABS: MY REPORTS / RESOLVED / EMERGENCY HOTLINES
+// ==========================================
+
+// 📞 Edit this list to add or change hotlines. `number` is what residents see; tapping a row dials it.
+// Add your barangay / municipal / fire station numbers here, e.g.
+//   { name: 'Barangay Hall', desc: 'Barangay emergency line', number: '09XX XXX XXXX', icon: 'ti-building-community', tone: 'blue' },
+const EMERGENCY_HOTLINES = [
+    { name: 'National Emergency Hotline', desc: 'Police, fire, medical and disaster response', number: '911', icon: 'ti-phone-call', tone: 'red' },
+    { name: 'Philippine Red Cross', desc: 'Ambulance, disaster response and humanitarian aid', number: '143', icon: 'ti-heartbeat', tone: 'red' },
+    { name: 'Philippine Red Cross (Trunkline)', desc: 'Main office, blood bank and coordination', number: '(02) 8527-0000', icon: 'ti-droplet', tone: 'blue' }
+];
+
+// Draws the hotline rows into any container (home tab + Emergency modal share this)
+function renderHotlineList(containerId) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+
+    if (!EMERGENCY_HOTLINES.length) {
+        container.innerHTML = `<div style="text-align:center; padding: 24px 10px; color: var(--text-muted); font-size: 13px;">No hotlines available yet.</div>`;
+        return;
+    }
+
+    container.innerHTML = EMERGENCY_HOTLINES.map(h => {
+        const dial = String(h.number).replace(/[^\d+]/g, '');
+        return `
+            <a class="hotline-row" href="tel:${dial}">
+                <span class="hotline-icon ${h.tone || ''}"><i class="ti ${h.icon || 'ti-phone'}"></i></span>
+                <span class="hotline-info">
+                    <span class="hotline-name">${escapeHtml(h.name)}</span>
+                    <span class="hotline-desc">${escapeHtml(h.desc || '')}</span>
+                </span>
+                <span class="hotline-call"><i class="ti ti-phone"></i>${escapeHtml(h.number)}</span>
+            </a>`;
+    }).join('');
+}
+
+// Profile > "Emergency & Brgy Info" modal (the page already calls this when the modal opens)
+function loadDynamicEmergencyInfo() {
+    renderHotlineList('dynamicEmergencyContainer');
+}
+
+// The page's bell icon calls fetchAlerts(); the alerts loader in this file is named loadAlerts()
+function fetchAlerts() {
+    return loadAlerts();
+}
+
+// 🔀 Toggle tabs on the Home card
+//   'all'      -> Total Reports Submitted
+//   'resolved' -> Resolved Clean-ups count
+//   'hotlines' -> Emergency Hotlines list
+function filterHomeReports(view, tabEl) {
+    document.querySelectorAll('.toggle-tab').forEach(t => t.classList.remove('active'));
+    if (tabEl) tabEl.classList.add('active');
+
+    const setDisplay = (id, visible, displayType) => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = visible ? displayType : 'none';
+    };
+
+    setDisplay('box_total', view === 'all', 'flex');
+    setDisplay('box_resolved', view === 'resolved', 'flex');
+    setDisplay('home_hotlines_list', view === 'hotlines', 'block');
+
+    if (view === 'hotlines') {
+        renderHotlineList('home_hotlines_list');
+    } else if (typeof loadDashboardStats === 'function') {
+        loadDashboardStats(); // refresh the numbers every time the tab is tapped
+    }
+}
+
+
+// ==========================================
+// 👋 HOME HEADER: USER NAME, PROFILE PICTURE & ADDRESS
+// ==========================================
+// Reads the logged-in user from the same saved session the Profile tab uses.
+async function loadHomeProfile() {
+    try {
+        const userSession = await localforage.getItem('user_session');
+        if (!userSession) return;
+
+        const greetingEl = document.getElementById('home_greeting');
+        const addressEl = document.getElementById('home_address');
+        const initialsEl = document.getElementById('home_profile_initials');
+        const imgEl = document.getElementById('home_profile_img');
+
+        const fullName = String(userSession.full_name || userSession.fullname || userSession.name || userSession.username || 'User').trim();
+        const firstName = fullName.split(/\s+/)[0];
+
+        // 👤 Name
+        if (greetingEl) greetingEl.textContent = `Hi, ${firstName} 👋`;
+
+        // 📍 Address (Purok / Sitio)
+        const address = userSession.address_purok_sitio || userSession.address || userSession.purok;
+        if (addressEl && address) addressEl.textContent = address;
+
+        // 🖼️ Profile picture, or initials when there is no picture
+        const picture = userSession.profile_pic_data || userSession.profile_picture || userSession.profile_pic;
+        if (picture && imgEl) {
+            imgEl.src = picture;
+            imgEl.style.display = 'block';
+            if (initialsEl) initialsEl.style.display = 'none';
+        } else {
+            if (imgEl) imgEl.style.display = 'none';
+            if (initialsEl) {
+                const parts = fullName.split(/\s+/);
+                let initials = parts[0].charAt(0).toUpperCase();
+                if (parts.length > 1) initials += parts[parts.length - 1].charAt(0).toUpperCase();
+                initialsEl.textContent = initials;
+                initialsEl.style.display = 'block';
+            }
+        }
+    } catch (error) {
+        console.error("Could not load home profile: ", error);
+    }
+}
+
+// Fill the header as soon as the app opens (the Home tab is the first screen),
+// and again when the page is fully loaded or shown again, so it can never be missed.
+loadHomeProfile();
+window.addEventListener('load', loadHomeProfile);
+window.addEventListener('pageshow', loadHomeProfile);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) loadHomeProfile(); });
+
+
+// ==========================================
+// 💀 SKELETON LOADING (grey placeholder shapes instead of spinners / "Loading..." text)
+// ==========================================
+const SKELETON_TEMPLATES = {
+    // matches a History row: thumbnail + title + date/badge
+    history: `
+        <div class="sk-card sk-history">
+            <div class="sk sk-thumb"></div>
+            <div class="sk-lines">
+                <div class="sk sk-line" style="width: 72%;"></div>
+                <div class="sk-split">
+                    <div class="sk sk-line" style="width: 38%; height: 11px;"></div>
+                    <div class="sk sk-pill"></div>
+                </div>
+            </div>
+        </div>`,
+    // matches a Community Feed card: badge + date, quote, reporter, before/after photos
+    feed: `
+        <div class="sk-card">
+            <div class="sk-split">
+                <div class="sk sk-pill" style="width: 104px;"></div>
+                <div class="sk sk-line" style="width: 70px; height: 11px;"></div>
+            </div>
+            <div class="sk sk-line" style="width: 85%; height: 18px; margin-top: 18px;"></div>
+            <div class="sk sk-line" style="width: 50%; height: 12px; margin-top: 10px;"></div>
+            <div class="sk-pair">
+                <div class="sk sk-img"></div>
+                <div class="sk sk-img"></div>
+            </div>
+        </div>`,
+    // matches an alert item: area tag + time, message lines
+    alerts: `
+        <div class="sk-card sk-alert">
+            <div class="sk-split">
+                <div class="sk sk-pill" style="width: 84px; height: 20px;"></div>
+                <div class="sk sk-line" style="width: 62px; height: 10px;"></div>
+            </div>
+            <div class="sk sk-line" style="width: 96%; margin-top: 14px;"></div>
+            <div class="sk sk-line" style="width: 64%; margin-top: 8px;"></div>
+        </div>`
+};
+
+// Shows the placeholder shapes. If real data is already on screen (from an earlier visit)
+// it is left in place and refreshed quietly instead, so nothing flashes.
+function showSkeleton(container, type, count) {
+    if (!container) return;
+    if (container.dataset.ready === '1') return;      // real content already showing
+    if (container.querySelector('.sk')) return;       // skeleton already showing
+    const template = SKELETON_TEMPLATES[type] || SKELETON_TEMPLATES.history;
+    container.innerHTML = template.repeat(count || 3);
+    container.setAttribute('aria-busy', 'true');
+}
+
+// Call after real content has been drawn
+function markSkeletonReady(container) {
+    if (!container) return;
+    container.dataset.ready = '1';
+    container.removeAttribute('aria-busy');
+}
+
+// Replaces the grey shapes with a friendly error + "Try again" button
+function showLoadError(container, message, retry) {
+    if (!container) return;
+    container.removeAttribute('aria-busy');
+    delete container.dataset.ready;       // next visit shows the skeleton again
+    container.innerHTML = `
+        <div class="load-error">
+            <i class="ti ti-wifi-off"></i>
+            <p>${escapeHtml(message)}</p>
+            <button type="button" class="btn-outline" data-retry><i class="ti ti-refresh"></i> Try again</button>
+        </div>`;
+    const btn = container.querySelector('[data-retry]');
+    if (btn && typeof retry === 'function') btn.addEventListener('click', () => retry());
+}
+
+// Home card numbers: grey shimmer bar instead of a "0" that jumps to the real value
+function setStatsLoading(isLoading) {
+    document.querySelectorAll('.stat-value').forEach(el => el.classList.toggle('is-loading', !!isLoading));
 }
