@@ -1,12 +1,10 @@
 // www/js/app.js
-// Add this at the top of js/app.js
-const BASE_URL = 'http://192.168.1.50/coastal_land_watch'; // Replace with your IP address or 10.0.2.2
+const BASE_URL = 'http://192.168.1.50/coastal_land_watch';
 
-// Single place to change the server address (used by the community feed and the hotlines/home tabs).
-// If you ever define API_BASE_URL somewhere else, that value is kept.
 if (typeof API_BASE_URL === 'undefined') {
     window.API_BASE_URL = 'https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch';
 }
+
 // 1. Variable to hold the photo data
 let capturedPhotoBase64 = null;
 
@@ -26,12 +24,46 @@ if (wasteTypeSelect) {
     });
 }
 
+// 🛰️ SHARED HYBRID + STREET TILE LAYERS
+function applyMapTileLayers(mapInstance, defaultMode = 'hybrid') {
+    const streetLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap'
+    });
+
+    const satelliteImagery = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19,
+        attribution: '&copy; Esri'
+    });
+
+    const roadOverlay = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19
+    });
+
+    const placeLabelsOverlay = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+        maxZoom: 19
+    });
+
+    const hybridLayer = L.layerGroup([satelliteImagery, roadOverlay, placeLabelsOverlay]);
+
+    if (defaultMode === 'street') {
+        streetLayer.addTo(mapInstance);
+    } else {
+        hybridLayer.addTo(mapInstance);
+    }
+
+    L.control.layers({
+        'Hybrid View': hybridLayer,
+        'Street View': streetLayer
+    }, null, { position: 'topright' }).addTo(mapInstance);
+}
+
 // 📸 OPEN LIVE CAMERA
 document.getElementById('openCameraBtn').addEventListener('click', async () => {
     try {
         const image = await Capacitor.Plugins.Camera.getPhoto({
-            quality: 50,          // Shrinks file size
-            width: 800,           // Prevents server crash
+            quality: 50,
+            width: 800,
             allowEditing: false,
             resultType: 'base64', 
             source: 'CAMERA'      
@@ -72,7 +104,6 @@ document.getElementById('getLocationBtn').addEventListener('click', async () => 
     const statusText = document.getElementById("location_status");
     statusText.innerHTML = '<i class="ti ti-loader"></i> Checking permissions...';
     
-    // Reset to coral warning color while loading
     if (typeof markLocationPinned === 'function') markLocationPinned(false); 
 
     try {
@@ -99,7 +130,6 @@ document.getElementById('getLocationBtn').addEventListener('click', async () => 
         document.getElementById("lat").value = lat;
         document.getElementById("lng").value = lng;
         
-        // 🚨 TRIGGER YOUR NEW UI CHIP:
         statusText.innerHTML = `<i class="ti ti-check"></i> GPS Pinned! (${lat}, ${lng})`;
         if (typeof markLocationPinned === 'function') markLocationPinned(true);
         
@@ -127,7 +157,6 @@ document.getElementById('getLocationBtn').addEventListener('click', async () => 
 document.getElementById('offlineReportForm').addEventListener('submit', async (e) => {
     e.preventDefault(); 
 
-    // 🚨 FIX 1: INSTANTLY DISABLE BUTTON TO PREVENT DOUBLE-TAPS
     const submitBtn = document.getElementById("submit_btn");
     submitBtn.disabled = true;
     submitBtn.innerHTML = '<i class="ti ti-loader spinner"></i> Processing...';
@@ -194,24 +223,24 @@ document.getElementById('offlineReportForm').addEventListener('submit', async (e
         toggleBtn.style.background = '#fff';
     }
     
-    document.getElementById("location_status").innerHTML = "Not pinned yet.";
-    document.getElementById("location_status").style.color = "#E53935";
+    const locChip = document.getElementById("location_status");
+    locChip.innerHTML = '<i class="ti ti-alert-circle"></i> Not pinned yet.';
+    locChip.style.color = '';
+    if (typeof markLocationPinned === 'function') markLocationPinned(false);
     
     document.getElementById('photoPreview').style.display = 'none';
     document.getElementById('photoPreview').src = '';
     capturedPhotoBase64 = null; 
 
-    // Keep disabled until next time they open the form
     submitBtn.innerHTML = '<i class="ti ti-send"></i> Submit Report';
 
     syncReports(); 
 });
 
 // 🔄 SYNC LOGIC
-let isSyncing = false; // 🚨 FIX 2: PREVENT OVERLAPPING SYNCS
+let isSyncing = false;
 
 async function syncReports() {
-    // If a sync is already running, stop and let it finish!
     if (isSyncing) return; 
 
     const networkStatus = await Capacitor.Plugins.Network.getStatus();
@@ -223,7 +252,6 @@ async function syncReports() {
     let offlineReports = await localforage.getItem('pending_waste_reports') || [];
     if (offlineReports.length === 0) return; 
 
-    // Lock the sync process
     isSyncing = true; 
 
     alert("Found " + offlineReports.length + " saved reports. Attempting to send...");
@@ -232,7 +260,7 @@ async function syncReports() {
         let report = offlineReports[i];
 
         try {
-            let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_receive_report.php', {
+            let response = await fetch(`${API_BASE_URL}/api_receive_report.php`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'text/plain',
@@ -248,7 +276,7 @@ async function syncReports() {
             } catch (parseError) {
                 alert("PHP CRASHED! Here is the exact server error: \n\n" + rawResponse);
                 console.error("Raw PHP Error: ", rawResponse);
-                isSyncing = false; // Unlock on error
+                isSyncing = false;
                 return; 
             }
 
@@ -256,21 +284,18 @@ async function syncReports() {
                 console.log("Successfully synced report!");
             } else {
                 alert("Database Error: " + result.message);
-                isSyncing = false; // Unlock on error
+                isSyncing = false;
                 return; 
             }
         } catch (error) {
             alert("System Error: " + error.message + " | " + error.name);
             console.error("Sync failed for this report: ", error);
-            isSyncing = false; // Unlock on error
+            isSyncing = false;
             return; 
         }
     }
 
-    // Clear the offline storage ONLY after all are successfully sent
     await localforage.setItem('pending_waste_reports', []);
-    
-    // Unlock the sync process
     isSyncing = false; 
 
     await alert('🎉 SUCCESS! Your reports have successfully synced to the Barangay Cloud!');
@@ -292,7 +317,6 @@ async function logoutUser() {
         ? await showConfirm("Are you sure you want to log out?", { title: 'Log out?', confirmText: 'Log out', cancelText: 'Stay', type: 'danger' })
         : confirm("Are you sure you want to log out?");
     if (confirmLogout) {
-        // Keep this phone's copy of the profile picture so it is still there after the next login
         try {
             const sess = await localforage.getItem('user_session');
             if (sess && sess.profile_pic_data) {
@@ -306,20 +330,23 @@ async function logoutUser() {
 
 // 🗺️ COMMUNITY MAP LOGIC
 let communityMap = null;
+let communityMarkersLayer = null;
+
 async function loadCommunityMap() {
     const mapContainer = document.getElementById('communityMap');
     if (!mapContainer) return; 
 
     if (!communityMap) {
         communityMap = L.map('communityMap').setView([11.45, 123.15], 13); 
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(communityMap);
+        applyMapTileLayers(communityMap, 'hybrid');
+        communityMarkersLayer = L.layerGroup().addTo(communityMap);
         setTimeout(() => {
             communityMap.invalidateSize();
         }, 500);
     }
 
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_map_data.php', {
+        let response = await fetch(`${API_BASE_URL}/api_get_map_data.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -327,24 +354,31 @@ async function loadCommunityMap() {
         let result = await response.json();
 
         if (result.status === 'success') {
+            if (communityMarkersLayer) {
+                communityMarkersLayer.clearLayers();
+            } else {
+                communityMarkersLayer = L.layerGroup().addTo(communityMap);
+            }
+
             let mapData = result.data;
             var redPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
             var greenPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
 
             mapData.forEach(function(loc) {
-                var currentIcon = (loc.status === 'Pending') ? redPin : greenPin; 
-                var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(communityMap);
+                var isPending = String(loc.status || '').toLowerCase() === 'pending';
+                var currentIcon = isPending ? redPin : greenPin; 
+                var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(communityMarkersLayer);
                 
                 let imageUrl = loc.image_data ? loc.image_data : 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
 
                 var popupContent = `
                     <div style="text-align:center; min-width: 150px; font-family: 'Segoe UI', Arial, sans-serif;">
                         <img src="${imageUrl}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 8px; margin-bottom: 8px; border: 1px solid #ccc;">
-                        <div style="font-size: 14px; color: ${loc.status === 'Pending' ? '#dc3545' : '#28a745'}; font-weight: bold; margin-bottom: 4px;">
-                            ${loc.status === 'Pending' ? '🔴 Pending' : '✅ Cleaned'}
+                        <div style="font-size: 14px; color: ${isPending ? '#dc3545' : '#28a745'}; font-weight: bold; margin-bottom: 4px;">
+                            ${isPending ? '🔴 Pending' : '✅ Cleaned'}
                         </div>
                         <div style="font-size: 12px; text-align: left; color: #555;">
-                            <b>Desc:</b> "${loc.description}"
+                            <b>Desc:</b> "${escapeHtml(loc.description)}"
                         </div>
                     </div>
                 `;
@@ -364,11 +398,10 @@ async function loadDashboardStats() {
         const userSession = await localforage.getItem('user_session');
         if (!userSession) return;
 
-        // 🚨 FIXED: Safely grabs user_id OR id:
         const userId = userSession.user_id || userSession.id;
         setStatsLoading(true);
 
-        let response = await fetch(`https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_dashboard_stats.php?user_id=${userId}`, {
+        let response = await fetch(`${API_BASE_URL}/api_get_dashboard_stats.php?user_id=${userId}`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -401,7 +434,7 @@ async function loadHistory() {
 
         showSkeleton(historyContainer, 'history', 4);
 
-        let response = await fetch(`https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_history.php?user_id=${userId}`, {
+        let response = await fetch(`${API_BASE_URL}/api_get_history.php?user_id=${userId}`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -435,8 +468,9 @@ async function loadHistory() {
 
             let html = '';
             reports.forEach((report, index) => {
-                let badgeClass = report.status === 'Pending' ? 'badge-pending' : 'badge-done';
-                let statusText = report.status === 'Pending' ? 'Pending' : 'Resolved';
+                const isPending = String(report.status || '').toLowerCase() === 'pending';
+                let badgeClass = isPending ? 'badge-pending' : 'badge-done';
+                let statusText = isPending ? 'Pending' : 'Resolved';
                 
                 let dateStr = "Recently";
                 if(report.created_at) {
@@ -446,12 +480,11 @@ async function loadHistory() {
 
                 let imageUrl = report.image_data ? report.image_data : 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
 
-                // 🚨 BENTO BOX UI + DESCRIPTION AS TITLE FIX
                 html += `
                     <div style="background: #ffffff; border-radius: 24px; padding: 20px; margin-bottom: 16px; box-shadow: 0 4px 15px rgba(0,0,0,0.03); cursor: pointer; display: flex; gap: 16px; align-items: center;" onclick="openReportModal(${index})">
                         <img src="${imageUrl}" style="width: 80px; height: 80px; object-fit: cover; border-radius: 16px; border: 1px solid #e5e5ea;">
                         <div style="flex: 1; overflow: hidden;">
-                            <p style="font-size: 18px; font-weight: 600; color: #212529; margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${report.description}</p>
+                            <p style="font-size: 18px; font-weight: 600; color: #212529; margin: 0 0 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">${escapeHtml(report.description)}</p>
                             <div style="display: flex; justify-content: space-between; align-items: center;">
                                 <p style="font-size: 13px; color: #8e8e93; margin: 0;">${dateStr}</p>
                                 <span class="badge ${badgeClass}">${statusText}</span>
@@ -477,15 +510,12 @@ function openReportModal(index) {
     let report = window.historyReports[index];
     if (!report) return;
 
-    // 1. TARGET THE NEW IMAGE CONTAINERS
     const afterContainer = document.getElementById('afterPhotoContainer');
     const imgBefore = document.getElementById('modalImageBefore');
     const imgAfter = document.getElementById('modalImageAfter');
 
-    // 2. SET THE BEFORE PHOTO
     imgBefore.src = report.image_data ? report.image_data : 'https://placehold.co/400x300/e0e0e0/a0a0a0?text=No+Photo';
 
-    // 3. SHOW/HIDE AFTER PHOTO BASED ON STATUS
     let currentStatus = report.status ? report.status.toLowerCase() : 'pending';
     if (currentStatus === 'resolved' || currentStatus === 'cleaned' || currentStatus === 'done') {
         afterContainer.style.display = 'block';
@@ -494,7 +524,6 @@ function openReportModal(index) {
         afterContainer.style.display = 'none';
     }
 
-    // 4. POPULATE THE REST OF THE DATA
     document.getElementById('modalName').innerText = window.historyUserName;
     document.getElementById('modalDesc').innerText = report.description;
 
@@ -504,10 +533,11 @@ function openReportModal(index) {
         dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
     }
     document.getElementById('modalDate').innerText = dateStr;
-    // Switch to OpenStreetMap to bypass Google's aggressive app redirects:
-document.getElementById('modalLocation').innerHTML = `<a href="#" onclick="window.location.href='https://www.openstreetmap.org/?mlat=${report.latitude}&mlon=${report.longitude}#map=16/${report.latitude}/${report.longitude}'; return false;" style="color:#1E88E5; text-decoration:none; font-weight:700;">View on Map 📍</a>`;
-    let badgeClass = report.status === 'Pending' ? 'badge-pending' : 'badge-done';
-    let statusText = report.status === 'Pending' ? 'Pending' : 'Resolved';
+    document.getElementById('modalLocation').innerHTML = `<a href="#" onclick="window.location.href='https://www.openstreetmap.org/?mlat=${report.latitude}&mlon=${report.longitude}#map=16/${report.latitude}/${report.longitude}'; return false;" style="color:#1E88E5; text-decoration:none; font-weight:700;">View on Map 📍</a>`;
+    
+    const isPending = currentStatus === 'pending';
+    let badgeClass = isPending ? 'badge-pending' : 'badge-done';
+    let statusText = isPending ? 'Pending' : 'Resolved';
     let badgeEl = document.getElementById('modalStatus');
     badgeEl.className = `badge ${badgeClass}`;
     badgeEl.innerText = statusText;
@@ -572,7 +602,6 @@ function closeEditProfileModal() {
     document.getElementById('editProfileModal').style.display = 'none';
 }
 
-// 💾 3. Submit Profile Changes to Server
 const editForm = document.getElementById('editProfileForm');
 if (editForm) {
     editForm.addEventListener('submit', async (e) => {
@@ -597,7 +626,7 @@ if (editForm) {
         };
 
         try {
-            let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_update_profile.php', {
+            let response = await fetch(`${API_BASE_URL}/api_update_profile.php`, {
                 method: 'POST',
                 headers: { 
                     'Content-Type': 'text/plain',
@@ -611,7 +640,6 @@ if (editForm) {
             try {
                 result = JSON.parse(rawText);
             } catch (parseError) {
-                // 🚨 THIS WILL SHOW THE REAL PHP/MYSQL ERROR ON YOUR SCREEN:
                 alert("PHP Server Error:\n\n" + rawText);
                 console.error("Raw PHP Output:", rawText);
                 return;
@@ -682,22 +710,17 @@ async function loadProfileDisplay() {
 let reportMap = null;
 let reportMarker = null;
 
-// 🔘 TOGGLE BUTTON LISTENER: Shows/Hides the Map
 const toggleMapBtn = document.getElementById('toggleManualMapBtn');
 if (toggleMapBtn) {
     toggleMapBtn.addEventListener('click', () => {
         const mapBox = document.getElementById('manualMapContainer');
         
         if (mapBox.style.display === 'none' || !mapBox.style.display) {
-            // Show Map
             mapBox.style.display = 'block';
             toggleMapBtn.innerHTML = '<i class="ti ti-eye-off"></i> Hide Manual Map';
-            toggleMapBtn.style.background = '#E8F5E9'; // Highlights green when open
-            
-            // Initialize and wake up Leaflet
+            toggleMapBtn.style.background = '#E8F5E9';
             initReportPinMap();
         } else {
-            // Hide Map
             mapBox.style.display = 'none';
             toggleMapBtn.innerHTML = '<i class="ti ti-map-pin"></i> Pin Location Manually on Map';
             toggleMapBtn.style.background = '#fff';
@@ -710,24 +733,9 @@ function initReportPinMap() {
     if (!mapContainer) return;
 
     if (!reportMap) {
-        var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
-        var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
+        reportMap = L.map('reportPinMap').setView([11.45, 123.15], 13);
+        applyMapTileLayers(reportMap, 'hybrid');
 
-        reportMap = L.map('reportPinMap', {
-            center: [11.45, 123.15],
-            zoom: 13,
-            layers: [osm]
-        });
-
-        var baseMaps = {
-            "Street View": osm,
-            "Satellite View": satellite
-        };
-        L.control.layers(baseMaps).addTo(reportMap);
-
-        // 🚨 MAP TAP LISTENER: Drop pin and enable Submit button!
-        // 🚨 MAP TAP LISTENER: Drop pin and enable Submit button!
-        // 🚨 MAP TAP LISTENER: Drop pin and enable Submit button!
         reportMap.on('click', function(e) {
             let lat = e.latlng.lat.toFixed(6);
             let lng = e.latlng.lng.toFixed(6);
@@ -741,7 +749,6 @@ function initReportPinMap() {
             document.getElementById("lat").value = lat;
             document.getElementById("lng").value = lng;
 
-            // 🚨 FIX: UPDATE UI TO SHOW IT WAS SUCCESSFULLY PINNED
             const statusText = document.getElementById("location_status");
             statusText.innerHTML = `<i class="ti ti-check"></i> Map Pinned! (${lat}, ${lng})`;
             
@@ -749,7 +756,6 @@ function initReportPinMap() {
                 markLocationPinned(true);
             }
             
-            // 🚨 FIX: ENABLE THE SUBMIT BUTTON
             document.getElementById("submit_btn").disabled = false;
         });
 
@@ -759,6 +765,7 @@ function initReportPinMap() {
     }
 }
 
+// 🌟 COMMUNITY FEED
 async function loadCommunityFeed() {
     const feedContainer = document.getElementById('feed_container');
     if (!feedContainer) return;
@@ -766,7 +773,6 @@ async function loadCommunityFeed() {
     try {
         showSkeleton(feedContainer, 'feed', 3);
 
-        // FIX 1: Use API_BASE_URL instead of the hardcoded link so it never breaks when Ngrok restarts
         let response = await fetch(`${API_BASE_URL}/api_get_community_feed.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
@@ -810,12 +816,10 @@ async function loadCommunityFeed() {
                     dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
                 }
 
-                // FIX 2: Handle both Base64 image strings AND regular filenames
                 let beforeFile = report.before_photo_path || report.image_data || report.photo;
                 let beforeImg = 'https://placehold.co/300x200/e0e0e0/a0a0a0?text=No+Photo';
                 
                 if (beforeFile) {
-                    // If it's a raw Base64 image code, use it directly. Otherwise, add the server folder path.
                     beforeImg = beforeFile.startsWith('data:image') 
                         ? beforeFile 
                         : `${API_BASE_URL}/uploads/reports/${beforeFile}`;
@@ -830,8 +834,8 @@ async function loadCommunityFeed() {
                         : `${API_BASE_URL}/uploads/reports/${afterFile}`;
                 }
 
-                let reporterName = report.reporter_name || report.username || "a concerned resident";
-                let desc = report.description || "Resolved Waste Issue";
+                let reporterName = escapeHtml(report.reporter_name || report.username || "a concerned resident");
+                let desc = escapeHtml(report.description || "Resolved Waste Issue");
 
                 html += `
                     <div style="background: #ffffff; border-radius: 28px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
@@ -869,24 +873,21 @@ async function loadCommunityFeed() {
         showLoadError(feedContainer, 'Failed to connect to server.', loadCommunityFeed);
     }
 }
+
 // ==========================================
 // 🚚 BASURA-ALERT (ADMIN BROADCAST) LOGIC
 // ==========================================
-
-// Small helper so we never inject raw admin text as HTML
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.innerText = (text === null || text === undefined) ? '' : text;
     return div.innerHTML;
 }
 
-// Shows/hides the red dot on the bell icon
 function updateAlertBadge(show) {
     const badge = document.getElementById('alertBadgeDot') || document.getElementById('unreadBadge');
     if (badge) badge.style.display = show ? 'block' : 'none';
 }
 
-// Called when the resident actually opens the Alerts modal
 async function loadAlerts() {
     const container = document.getElementById('alertsContainer');
     if (!container) return;
@@ -894,7 +895,7 @@ async function loadAlerts() {
     showSkeleton(container, 'alerts', 3);
 
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_alerts.php', {
+        let response = await fetch(`${API_BASE_URL}/api_get_alerts.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -927,7 +928,6 @@ async function loadAlerts() {
             container.innerHTML = html;
             markSkeletonReady(container);
 
-            // Remember the newest alert we've now shown, so the badge only lights up for truly new ones
             const newestId = item_id(result.data[0]);
             if (newestId !== null) {
                 await localforage.setItem('last_seen_alert_id', newestId);
@@ -946,11 +946,9 @@ async function loadAlerts() {
     }
 }
 
-// Quietly checks in the background (e.g. right after login) so the bell badge
-// can light up even before the resident taps it
 async function checkForNewAlerts() {
     try {
-        let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_get_alerts.php', {
+        let response = await fetch(`${API_BASE_URL}/api_get_alerts.php`, {
             method: 'GET',
             headers: { 'ngrok-skip-browser-warning': 'true' }
         });
@@ -969,8 +967,6 @@ async function checkForNewAlerts() {
     }
 }
 
-// The basura_alerts table's primary key column name may be alert_id or id
-// depending on how it was created — this just reads whichever one exists.
 function item_id(row) {
     if (!row) return null;
     if (row.alert_id !== undefined) return row.alert_id;
@@ -978,58 +974,216 @@ function item_id(row) {
     return null;
 }
 
-
 // ==========================================
-// 🏠 HOME TABS: MY REPORTS / RESOLVED / EMERGENCY HOTLINES
+// ☎️ EMERGENCY & BRGY INFO (AUTO-SYNCED WITH WEBSITE SETTINGS)
 // ==========================================
-
-// 📞 Edit this list to add or change hotlines. `number` is what residents see; tapping a row dials it.
-// Add your barangay / municipal / fire station numbers here, e.g.
-//   { name: 'Barangay Hall', desc: 'Barangay emergency line', number: '09XX XXX XXXX', icon: 'ti-building-community', tone: 'blue' },
-const EMERGENCY_HOTLINES = [
+const FALLBACK_HOTLINES = [
     { name: 'National Emergency Hotline', desc: 'Police, fire, medical and disaster response', number: '911', icon: 'ti-phone-call', tone: 'red' },
-    { name: 'Philippine Red Cross', desc: 'Ambulance, disaster response and humanitarian aid', number: '143', icon: 'ti-heartbeat', tone: 'red' },
-    { name: 'Philippine Red Cross (Trunkline)', desc: 'Main office, blood bank and coordination', number: '(02) 8527-0000', icon: 'ti-droplet', tone: 'blue' }
+    { name: 'Philippine Red Cross', desc: 'Ambulance, disaster response and humanitarian aid', number: '143', icon: 'ti-heartbeat', tone: 'red' }
 ];
 
-// Draws the hotline rows into any container (home tab + Emergency modal share this)
-function renderHotlineList(containerId) {
+function buildHotlineRowsHtml(items) {
+    if (!items || !items.length) return '';
+    return items
+        .filter(item => item && item.number && String(item.number).trim() !== '')
+        .map(h => {
+            const dial = String(h.number).replace(/[^\d+]/g, '');
+            return `
+                <a class="hotline-row" href="tel:${dial}">
+                    <span class="hotline-icon ${h.tone || ''}"><i class="ti ${h.icon || 'ti-phone'}"></i></span>
+                    <span class="hotline-info">
+                        <span class="hotline-name">${escapeHtml(h.name)}</span>
+                        ${h.desc ? `<span class="hotline-desc">${escapeHtml(h.desc)}</span>` : ''}
+                    </span>
+                    <span class="hotline-call"><i class="ti ti-phone"></i>${escapeHtml(h.number)}</span>
+                </a>`;
+        }).join('');
+}
+
+function normalizeBarangayRow(raw) {
+    if (!raw) return null;
+    // Kung naka-wrap sa array (hal. [ { id: 1, ... } ]), kunin ang unang row
+    if (Array.isArray(raw)) {
+        return raw.length > 0 && typeof raw[0] === 'object' ? raw[0] : null;
+    }
+    if (typeof raw === 'object') {
+        if (raw.data) return normalizeBarangayRow(raw.data);
+        return raw;
+    }
+    return null;
+}
+
+function parseBarangayInfoRow(rawInput) {
+    const row = normalizeBarangayRow(rawInput);
+    if (!row) {
+        return { brgyInfo: [], hotlines: FALLBACK_HOTLINES, hasServerData: false };
+    }
+
+    const pick = (...keys) => {
+        for (const k of keys) {
+            if (row[k] !== undefined && row[k] !== null && String(row[k]).trim() !== '') {
+                return String(row[k]).trim();
+            }
+        }
+        return '';
+    };
+
+    // 1. Barangay Information (kapareho ng nasa Website Settings)
+    const brgyInfo = [];
+    const brgyName  = pick('barangay_name', 'brgy_name');
+    const captain   = pick('captain_name', 'punong_barangay', 'barangay_captain');
+    const capPhone  = pick('captain_contact', 'captain_number');
+    const secretary = pick('secretary_name', 'barangay_secretary');
+    const secPhone  = pick('secretary_contact', 'secretary_number');
+    const brgyPhone = pick('contact_number', 'barangay_contact', 'barangay_hotline');
+    const hours     = pick('office_hours', 'operating_hours');
+
+    if (brgyName)  brgyInfo.push({ label: 'Barangay', value: brgyName, isPhone: false });
+    if (brgyPhone) brgyInfo.push({ label: 'Main Office Contact', value: brgyPhone, isPhone: true });
+    if (captain)   brgyInfo.push({ label: 'Barangay Captain', value: capPhone ? `${captain} (${capPhone})` : captain, isPhone: false });
+    if (secretary) brgyInfo.push({ label: 'Barangay Secretary', value: secPhone ? `${secretary} (${secPhone})` : secretary, isPhone: false });
+    if (hours)     brgyInfo.push({ label: 'Office Hours', value: hours, isPhone: false });
+
+    // 2. Emergency Hotlines (eksaktong pagkakasunod-sunod sa admin_dashboard.php)
+    const hotlines = [];
+    const police = pick('pnp_hotline', 'police_station', 'police_hotline');
+    const fire   = pick('bfp_hotline', 'fire_station', 'fire_hotline');
+    const mdrrmo = pick('mdrrmo_hotline', 'mdrrmo');
+    const health = pick('health_center_hotline', 'health_center', 'health_hotline');
+
+    if (police) hotlines.push({ name: 'Police Station', desc: 'PNP Emergency Response', number: police, icon: 'ti-shield', tone: 'blue' });
+    if (fire)   hotlines.push({ name: 'Fire Station (BFP)', desc: 'Bureau of Fire Protection', number: fire, icon: 'ti-flame', tone: 'red' });
+    if (mdrrmo) hotlines.push({ name: 'MDRRMO', desc: 'Disaster Risk Reduction & Rescue', number: mdrrmo, icon: 'ti-ambulance', tone: 'red' });
+    if (health) hotlines.push({ name: 'Health Center', desc: 'Medical & First Aid Assistance', number: health, icon: 'ti-heartbeat', tone: 'red' });
+
+    // 3. Other Important Contacts (mula sa "+ Add Contact" / custom_hotlines JSON sa website)
+    const rawCustom = pick('custom_hotlines');
+    if (rawCustom) {
+        try {
+            let parsed = JSON.parse(rawCustom);
+            if (typeof parsed === 'string') parsed = JSON.parse(parsed);
+
+            if (Array.isArray(parsed)) {
+                parsed.forEach(c => {
+                    if (!c || typeof c !== 'object') return;
+                    const name = String(c.name || c.label || c.title || '').trim();
+                    const num  = String(c.number || c.phone || c.contact || '').trim();
+                    if (name && num) {
+                        hotlines.push({
+                            name: name,
+                            desc: 'Other Important Contact',
+                            number: num,
+                            icon: 'ti-phone-call',
+                            tone: 'blue'
+                        });
+                    }
+                });
+            }
+        } catch (e) {
+            console.warn('Invalid custom_hotlines JSON:', e);
+        }
+    }
+
+    return {
+        brgyInfo,
+        hotlines: hotlines.length > 0 ? hotlines : FALLBACK_HOTLINES,
+        hasServerData: true
+    };
+}
+
+async function fetchBarangayInfoData() {
+    try {
+        // May cache-buster (?t=...) para laging makuha ang pinakabagong edit sa website
+        const response = await fetch(`${API_BASE_URL}/api_get_barangay_info.php?t=${Date.now()}`, {
+            method: 'GET',
+            headers: {
+                'ngrok-skip-browser-warning': 'true',
+                'Cache-Control': 'no-cache'
+            }
+        });
+        const result = await response.json();
+        const row = normalizeBarangayRow(result.status === 'success' ? result.data : result);
+
+        if (row && (row.pnp_hotline !== undefined || row.barangay_name !== undefined || row.id !== undefined)) {
+            await localforage.setItem('cached_barangay_info', row);
+            return parseBarangayInfoRow(row);
+        }
+    } catch (error) {
+        console.error('Could not fetch barangay info:', error);
+    }
+
+    // Offline fallback: gamitin ang huling na-sync mula sa website
+    const cached = await localforage.getItem('cached_barangay_info');
+    return parseBarangayInfoRow(cached);
+}
+
+async function renderHotlineList(containerId) {
     const container = document.getElementById(containerId);
     if (!container) return;
 
-    if (!EMERGENCY_HOTLINES.length) {
-        container.innerHTML = `<div style="text-align:center; padding: 24px 10px; color: var(--text-muted); font-size: 13px;">No hotlines available yet.</div>`;
-        return;
+    container.innerHTML = `<div style="text-align:center; padding: 18px; color: var(--text-muted); font-size: 13px;">Syncing hotlines from website...</div>`;
+
+    const { hotlines } = await fetchBarangayInfoData();
+    const html = buildHotlineRowsHtml(hotlines);
+    container.innerHTML = html || `<div style="text-align:center; padding: 24px 10px; color: var(--text-muted); font-size: 13px;">No hotlines configured on the website yet.</div>`;
+}
+
+async function loadDynamicEmergencyInfo() {
+    const container = document.getElementById('dynamicEmergencyContainer');
+    if (!container) return;
+
+    container.innerHTML = `<div style="text-align:center; padding: 24px; color: var(--text-muted); font-size: 13px;">Loading Emergency & Barangay Info...</div>`;
+
+    const { brgyInfo, hotlines } = await fetchBarangayInfoData();
+    let html = '';
+
+    if (brgyInfo.length > 0) {
+        html += `<div style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 8px;">Barangay Information</div>`;
+        html += `<div class="detail-box" style="margin-bottom: 18px;">`;
+        brgyInfo.forEach(item => {
+            if (item.isPhone) {
+                const dial = String(item.value).replace(/[^\d+]/g, '');
+                html += `
+                    <div class="detail-row">
+                        <span class="detail-key">${escapeHtml(item.label)}</span>
+                        <a href="tel:${dial}" style="color: var(--primary-dark); font-weight: 700; text-decoration: none;">${escapeHtml(item.value)}</a>
+                    </div>`;
+            } else {
+                html += `
+                    <div class="detail-row">
+                        <span class="detail-key">${escapeHtml(item.label)}</span>
+                        <span>${escapeHtml(item.value)}</span>
+                    </div>`;
+            }
+        });
+        html += `</div>`;
     }
 
-    container.innerHTML = EMERGENCY_HOTLINES.map(h => {
-        const dial = String(h.number).replace(/[^\d+]/g, '');
-        return `
-            <a class="hotline-row" href="tel:${dial}">
-                <span class="hotline-icon ${h.tone || ''}"><i class="ti ${h.icon || 'ti-phone'}"></i></span>
-                <span class="hotline-info">
-                    <span class="hotline-name">${escapeHtml(h.name)}</span>
-                    <span class="hotline-desc">${escapeHtml(h.desc || '')}</span>
-                </span>
-                <span class="hotline-call"><i class="ti ti-phone"></i>${escapeHtml(h.number)}</span>
-            </a>`;
-    }).join('');
+    const hotlinesHtml = buildHotlineRowsHtml(hotlines);
+    if (hotlinesHtml) {
+        html += `<div style="font-size: 12px; font-weight: 700; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.6px; margin: 0 0 8px;">Emergency Hotlines</div>`;
+        html += `<div>${hotlinesHtml}</div>`;
+    }
+
+    container.innerHTML = html || `<div style="text-align:center; padding: 24px 10px; color: var(--text-muted); font-size: 13px;">No emergency or barangay information available.</div>`;
 }
 
-// Profile > "Emergency & Brgy Info" modal (the page already calls this when the modal opens)
-function loadDynamicEmergencyInfo() {
-    renderHotlineList('dynamicEmergencyContainer');
-}
+// Kusang mag-sync ng hotlines pagbukas o pagbalik sa app
+window.addEventListener('DOMContentLoaded', () => { fetchBarangayInfoData(); });
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) {
+        fetchBarangayInfoData();
+        const hotlinesBox = document.getElementById('home_hotlines_list');
+        if (hotlinesBox && hotlinesBox.style.display === 'block') {
+            renderHotlineList('home_hotlines_list');
+        }
+    }
+});
 
-// The page's bell icon calls fetchAlerts(); the alerts loader in this file is named loadAlerts()
 function fetchAlerts() {
     return loadAlerts();
 }
 
-// 🔀 Toggle tabs on the Home card
-//   'all'      -> Total Reports Submitted
-//   'resolved' -> Resolved Clean-ups count
-//   'hotlines' -> Emergency Hotlines list
 function filterHomeReports(view, tabEl) {
     document.querySelectorAll('.toggle-tab').forEach(t => t.classList.remove('active'));
     if (tabEl) tabEl.classList.add('active');
@@ -1046,15 +1200,13 @@ function filterHomeReports(view, tabEl) {
     if (view === 'hotlines') {
         renderHotlineList('home_hotlines_list');
     } else if (typeof loadDashboardStats === 'function') {
-        loadDashboardStats(); // refresh the numbers every time the tab is tapped
+        loadDashboardStats();
     }
 }
-
 
 // ==========================================
 // 👋 HOME HEADER: USER NAME, PROFILE PICTURE & ADDRESS
 // ==========================================
-// Reads the logged-in user from the same saved session the Profile tab uses.
 async function loadHomeProfile() {
     try {
         const userSession = await localforage.getItem('user_session');
@@ -1068,14 +1220,11 @@ async function loadHomeProfile() {
         const fullName = String(userSession.full_name || userSession.fullname || userSession.name || userSession.username || 'User').trim();
         const firstName = fullName.split(/\s+/)[0];
 
-        // 👤 Name
         if (greetingEl) greetingEl.textContent = `Hi, ${firstName} 👋`;
 
-        // 📍 Address (Purok / Sitio)
         const address = userSession.address_purok_sitio || userSession.address || userSession.purok;
         if (addressEl && address) addressEl.textContent = address;
 
-        // 🖼️ Profile picture, or initials when there is no picture
         const picture = userSession.profile_pic_data || userSession.profile_picture || userSession.profile_pic;
         if (picture && imgEl) {
             imgEl.src = picture;
@@ -1096,19 +1245,15 @@ async function loadHomeProfile() {
     }
 }
 
-// Fill the header as soon as the app opens (the Home tab is the first screen),
-// and again when the page is fully loaded or shown again, so it can never be missed.
 loadHomeProfile();
 window.addEventListener('load', loadHomeProfile);
 window.addEventListener('pageshow', loadHomeProfile);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) loadHomeProfile(); });
 
-
 // ==========================================
-// 💀 SKELETON LOADING (grey placeholder shapes instead of spinners / "Loading..." text)
+// 💀 SKELETON LOADING
 // ==========================================
 const SKELETON_TEMPLATES = {
-    // matches a History row: thumbnail + title + date/badge
     history: `
         <div class="sk-card sk-history">
             <div class="sk sk-thumb"></div>
@@ -1120,7 +1265,6 @@ const SKELETON_TEMPLATES = {
                 </div>
             </div>
         </div>`,
-    // matches a Community Feed card: badge + date, quote, reporter, before/after photos
     feed: `
         <div class="sk-card">
             <div class="sk-split">
@@ -1134,7 +1278,6 @@ const SKELETON_TEMPLATES = {
                 <div class="sk sk-img"></div>
             </div>
         </div>`,
-    // matches an alert item: area tag + time, message lines
     alerts: `
         <div class="sk-card sk-alert">
             <div class="sk-split">
@@ -1146,29 +1289,25 @@ const SKELETON_TEMPLATES = {
         </div>`
 };
 
-// Shows the placeholder shapes. If real data is already on screen (from an earlier visit)
-// it is left in place and refreshed quietly instead, so nothing flashes.
 function showSkeleton(container, type, count) {
     if (!container) return;
-    if (container.dataset.ready === '1') return;      // real content already showing
-    if (container.querySelector('.sk')) return;       // skeleton already showing
+    if (container.dataset.ready === '1') return;
+    if (container.querySelector('.sk')) return;
     const template = SKELETON_TEMPLATES[type] || SKELETON_TEMPLATES.history;
     container.innerHTML = template.repeat(count || 3);
     container.setAttribute('aria-busy', 'true');
 }
 
-// Call after real content has been drawn
 function markSkeletonReady(container) {
     if (!container) return;
     container.dataset.ready = '1';
     container.removeAttribute('aria-busy');
 }
 
-// Replaces the grey shapes with a friendly error + "Try again" button
 function showLoadError(container, message, retry) {
     if (!container) return;
     container.removeAttribute('aria-busy');
-    delete container.dataset.ready;       // next visit shows the skeleton again
+    delete container.dataset.ready;
     container.innerHTML = `
         <div class="load-error">
             <i class="ti ti-wifi-off"></i>
@@ -1179,7 +1318,293 @@ function showLoadError(container, message, retry) {
     if (btn && typeof retry === 'function') btn.addEventListener('click', () => retry());
 }
 
-// Home card numbers: grey shimmer bar instead of a "0" that jumps to the real value
 function setStatsLoading(isLoading) {
     document.querySelectorAll('.stat-value').forEach(el => el.classList.toggle('is-loading', !!isLoading));
 }
+
+// ==========================================
+// 🔍 COMMUNITY FEED FILTERS
+// ==========================================
+function toggleFeedFilters() {
+    const body = document.getElementById('feedFilterBody');
+    const icon = document.getElementById('feedFilterIcon');
+    if (!body) return;
+    const isHidden = body.style.display === 'none' || !body.style.display;
+    body.style.display = isHidden ? 'block' : 'none';
+    if (icon) icon.className = isHidden ? 'ti ti-chevron-up' : 'ti ti-chevron-down';
+}
+
+function clearFeedFilters() {
+    const typeEl = document.getElementById('feedFilterType');
+    const startEl = document.getElementById('feedFilterStartDate');
+    const endEl = document.getElementById('feedFilterEndDate');
+    if (typeEl) typeEl.value = 'all';
+    if (startEl) startEl.value = '';
+    if (endEl) endEl.value = '';
+    applyFeedFilters();
+}
+
+async function applyFeedFilters() {
+    const feedContainer = document.getElementById('feed_container');
+    if (!feedContainer) return;
+
+    const filterType = (document.getElementById('feedFilterType')?.value) || 'all';
+    const startDate = document.getElementById('feedFilterStartDate')?.value || '';
+    const endDate = document.getElementById('feedFilterEndDate')?.value || '';
+
+    try {
+        delete feedContainer.dataset.ready;
+        showSkeleton(feedContainer, 'feed', 3);
+
+        const userSession = await localforage.getItem('user_session');
+        const activeUserId = userSession ? String(userSession.user_id || userSession.id || '') : '';
+        const activeName = userSession ? String(userSession.full_name || userSession.username || '').toLowerCase() : '';
+
+        const response = await fetch(`${API_BASE_URL}/api_get_community_feed.php`, {
+            method: 'GET',
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        const result = await response.json();
+        if (result.status !== 'success') {
+            showLoadError(feedContainer, result.message || 'Could not load feed.', applyFeedFilters);
+            return;
+        }
+
+        let reports = result.data || [];
+
+        if (filterType === 'mine' && userSession) {
+            reports = reports.filter(r => {
+                const ownerId = String(r.resident_id || r.user_id || '');
+                if (ownerId && activeUserId) return ownerId === activeUserId;
+                const repName = String(r.reporter_name || r.username || '').toLowerCase();
+                return activeName && repName === activeName;
+            });
+        }
+
+        if (startDate) {
+            const startMs = new Date(startDate + 'T00:00:00').getTime();
+            reports = reports.filter(r => new Date(r.created_at || r.timestamp).getTime() >= startMs);
+        }
+        if (endDate) {
+            const endMs = new Date(endDate + 'T23:59:59').getTime();
+            reports = reports.filter(r => new Date(r.created_at || r.timestamp).getTime() <= endMs);
+        }
+
+        if (reports.length === 0) {
+            feedContainer.innerHTML = `
+                <div class="card text-center" style="padding: 40px 20px; text-align:center; border:none; box-shadow:0 4px 15px rgba(0,0,0,0.03);">
+                    <i class="ti ti-filter-off" style="font-size: 40px; color: #ccc; margin-bottom: 10px;"></i>
+                    <p style="font-size: 18px; font-weight: 600; color: #212529; margin: 0 0 6px;">No matching clean-ups</p>
+                    <p style="font-size: 14px; color: #8e8e93; margin: 0;">Try clearing or adjusting your filters.</p>
+                </div>`;
+            markSkeletonReady(feedContainer);
+            return;
+        }
+
+        feedContainer.innerHTML = reports.map(report => {
+            let dateStr = "Recently";
+            if (report.created_at || report.timestamp) {
+                dateStr = new Date(report.created_at || report.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+            }
+            const beforeFile = report.before_photo_path || report.image_data || report.photo;
+            const beforeImg = beforeFile
+                ? (beforeFile.startsWith('data:image') ? beforeFile : `${API_BASE_URL}/uploads/reports/${beforeFile}`)
+                : 'https://placehold.co/300x200/e0e0e0/a0a0a0?text=No+Photo';
+            const afterFile = report.after_photo_path || report.after_image || report.after_photo;
+            const afterImg = afterFile
+                ? (afterFile.startsWith('data:image') ? afterFile : `${API_BASE_URL}/uploads/reports/${afterFile}`)
+                : 'https://placehold.co/300x200/e6f8f3/34d399?text=Cleaned+Area';
+            const reporterName = escapeHtml(report.reporter_name || report.username || "a concerned resident");
+            const desc = escapeHtml(report.description || "Resolved Waste Issue");
+
+            return `
+                <div style="background: #ffffff; border-radius: 28px; padding: 24px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.03);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                        <span style="background: #E6F8F3; color: #34D399; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; display: inline-flex; align-items: center; gap: 4px;">
+                            <i class="ti ti-check"></i> Area Cleaned
+                        </span>
+                        <span style="font-size: 13px; color: #8e8e93; font-weight: 500;">${dateStr}</span>
+                    </div>
+                    <p style="font-size: 18px; font-weight: 600; margin: 0 0 6px; color: #212529; line-height: 1.4;">"${desc}"</p>
+                    <p style="font-size: 14px; color: #8e8e93; font-style: italic; margin: 0 0 20px;">— Reported by ${reporterName}</p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                        <div style="text-align: center;">
+                            <img src="${beforeImg}" style="width: 100%; height: 140px; object-fit: cover; border-radius: 16px; margin-bottom: 8px; border: 1px solid #e5e5ea;">
+                            <span style="font-size: 12px; color: #8e8e93; font-weight: 600; letter-spacing: 0.5px;">● BEFORE</span>
+                        </div>
+                        <div style="text-align: center;">
+                            <img src="${afterImg}" style="width: 100%; height: 140px; object-fit: cover; border-radius: 16px; margin-bottom: 8px; border: 1px solid #e5e5ea;">
+                            <span style="font-size: 12px; color: #212529; font-weight: 600; letter-spacing: 0.5px;">● AFTER</span>
+                        </div>
+                    </div>
+                </div>`;
+        }).join('');
+        markSkeletonReady(feedContainer);
+    } catch (error) {
+        console.error("Feed filter error:", error);
+        showLoadError(feedContainer, 'Failed to filter feed.', applyFeedFilters);
+    }
+}
+
+// ==========================================
+// 🗺️ PROFILE FILTERED MAP MODAL
+// ==========================================
+let profileFilteredMap = null;
+let profileFilteredLayer = null;
+
+function parseReportDateMs(rawDate) {
+    if (!rawDate) return NaN;
+    const str = String(rawDate).trim();
+    const normalized = (str.includes(' ') && !str.includes('T')) ? str.replace(' ', 'T') : str;
+    return new Date(normalized).getTime();
+}
+
+function openFilteredMapModal() {
+    const modal = document.getElementById('filteredMapModal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+
+    if (!profileFilteredMap) {
+        profileFilteredMap = L.map('profileFilteredMap').setView([11.45, 123.15], 13);
+        applyMapTileLayers(profileFilteredMap, 'hybrid');
+        profileFilteredLayer = L.layerGroup().addTo(profileFilteredMap);
+    }
+    setTimeout(() => {
+        profileFilteredMap.invalidateSize();
+        applyProfileMapFilters();
+    }, 300);
+}
+
+function closeFilteredMapModal() {
+    const modal = document.getElementById('filteredMapModal');
+    if (modal) modal.style.display = 'none';
+}
+
+async function applyProfileMapFilters() {
+    if (!profileFilteredMap) return;
+
+    const filterType = document.getElementById('profileMapFilterType')?.value || 'all';
+    const startDate = document.getElementById('profileMapFilterStartDate')?.value || '';
+    const endDate = document.getElementById('profileMapFilterEndDate')?.value || '';
+    const applyBtn = document.getElementById('applyProfileMapFiltersBtn');
+
+    if (applyBtn) {
+        applyBtn.disabled = true;
+        applyBtn.innerHTML = '<i class="ti ti-loader"></i> Filtering...';
+    }
+
+    try {
+        const userSession = await localforage.getItem('user_session');
+        const activeUserId = userSession ? String(userSession.user_id || userSession.id || '') : '';
+
+        let pins = [];
+
+        if (filterType === 'mine') {
+            if (!activeUserId) {
+                alert('You must be logged in to view your reports.');
+                return;
+            }
+            // Fetch directly from history API so user ownership and created_at are guaranteed
+            const res = await fetch(`${API_BASE_URL}/api_get_history.php?user_id=${encodeURIComponent(activeUserId)}`, {
+                method: 'GET',
+                headers: { 'ngrok-skip-browser-warning': 'true' }
+            });
+            const data = await res.json();
+            if (data.status !== 'success') {
+                alert(data.message || 'Could not load your reports.');
+                return;
+            }
+            pins = data.data || [];
+        } else {
+            const res = await fetch(`${API_BASE_URL}/api_get_map_data.php`, {
+                method: 'GET',
+                headers: { 'ngrok-skip-browser-warning': 'true' }
+            });
+            const data = await res.json();
+            if (data.status !== 'success') {
+                alert(data.message || 'Could not load map reports.');
+                return;
+            }
+            pins = data.data || [];
+        }
+
+        // Strict date filtering (never bypasses pins when a date filter is set)
+        if (startDate) {
+            const startMs = new Date(startDate + 'T00:00:00').getTime();
+            pins = pins.filter(p => {
+                const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
+                return !Number.isNaN(reportMs) && reportMs >= startMs;
+            });
+        }
+
+        if (endDate) {
+            const endMs = new Date(endDate + 'T23:59:59.999').getTime();
+            pins = pins.filter(p => {
+                const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
+                return !Number.isNaN(reportMs) && reportMs <= endMs;
+            });
+        }
+
+        if (profileFilteredLayer) profileFilteredLayer.clearLayers();
+
+        // Keep only pins with valid coordinates
+        pins = pins.filter(p => isFinite(parseFloat(p.latitude)) && isFinite(parseFloat(p.longitude)));
+
+        if (pins.length === 0) {
+            if (typeof showAlert === 'function') {
+                await showAlert('No reports matched your selected filter and date.', { type: 'info', title: 'No Matching Reports' });
+            } else {
+                alert('No reports matched your selected filter and date.');
+            }
+            return;
+        }
+
+        const redPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
+        const greenPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
+
+        const bounds = [];
+        pins.forEach(loc => {
+            const lat = parseFloat(loc.latitude);
+            const lng = parseFloat(loc.longitude);
+            bounds.push([lat, lng]);
+
+            const isPending = String(loc.status || '').toLowerCase() === 'pending';
+            const marker = L.marker([lat, lng], { icon: isPending ? redPin : greenPin }).addTo(profileFilteredLayer);
+            const imgUrl = loc.image_data || 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
+            const rawDate = loc.created_at || loc.timestamp || '';
+            const dateLabel = rawDate ? new Date(String(rawDate).replace(' ', 'T')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+            marker.bindPopup(`
+                <div style="text-align:center; min-width:150px;">
+                    <img src="${imgUrl}" style="width:100%; height:90px; object-fit:cover; border-radius:8px; margin-bottom:6px;">
+                    <div style="font-weight:bold; color:${isPending ? '#dc3545' : '#28a745'};">${isPending ? '🔴 Pending' : '✅ Cleaned'}</div>
+                    ${dateLabel ? `<div style="font-size:11px; color:#888; margin-top:2px;">${dateLabel}</div>` : ''}
+                    <div style="font-size:12px; text-align:left; color:#555; margin-top:4px;">${escapeHtml(loc.description || '')}</div>
+                </div>
+            `);
+        });
+
+        if (bounds.length > 0) {
+            profileFilteredMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+        }
+    } catch (error) {
+        console.error("Profile filtered map error:", error);
+        alert('Could not filter map reports. Check your connection.');
+    } finally {
+        if (applyBtn) {
+            applyBtn.disabled = false;
+            applyBtn.innerHTML = '<i class="ti ti-filter"></i> Apply Filters';
+        }
+    }
+}
+
+// ==========================================
+// 🚀 INITIAL STARTUP LOAD (Home Map, Stats & Alerts)
+// ==========================================
+window.addEventListener('DOMContentLoaded', () => {
+    setTimeout(() => {
+        if (typeof loadCommunityMap === 'function') loadCommunityMap();
+        if (typeof loadDashboardStats === 'function') loadDashboardStats();
+        if (typeof checkForNewAlerts === 'function') checkForNewAlerts();
+    }, 300);
+});
