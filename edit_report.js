@@ -1,18 +1,12 @@
 // www/js/edit_report.js
-// Lets a resident edit one of their Pending reports (description, photo, location pin).
-//
-// How it plugs in (nothing in app.js has to change):
-//   - It wraps openReportModal() so the "Edit Report" button only shows for Pending reports.
-//   - It opens the #editReportModal that is added in index.html.
-//   - It saves through api_edit_report.php and then refreshes History, the map and the stats.
-//
-// Load it AFTER app.js:  <script src="js/app.js"></script>  <script src="js/edit_report.js"></script>
+// Lets a resident edit one of their Pending reports (waste type, exact location, photo, location pin).
 (function () {
+    var MAX_LOC = 400;
     var MAX_DESC = 500; // must match api_edit_report.php
 
-    var currentReport = null;   // the report shown in the Report Details modal
-    var newPhotoBase64 = null;  // set when the resident picks a new photo
-    var newLat = null;          // set when the resident moves the pin
+    var currentReport = null;
+    var newPhotoBase64 = null;
+    var newLat = null;
     var newLng = null;
     var editMap = null;
     var editMarker = null;
@@ -25,6 +19,16 @@
         return base + '/api_edit_report.php';
     }
 
+    // Parse "[Type: Plastic] Location: Near blue gate" back into separate fields
+    function parseReportDescription(rawDesc) {
+        var text = String(rawDesc || '').trim();
+        var match = text.match(/^\[Type:\s*(.+?)\]\s*Location:\s*([\s\S]*)$/i);
+        if (match) {
+            return { wasteType: match[1].trim(), exactLocation: match[2].trim() };
+        }
+        return { wasteType: '', exactLocation: text };
+    }
+
     // ---------------------------------------------------------------- Report Details modal hook
     var originalOpenReportModal = window.openReportModal;
     window.openReportModal = function (index) {
@@ -32,7 +36,8 @@
         currentReport = (window.historyReports || [])[index] || null;
         var btn = $('editReportBtn');
         if (btn) {
-            var editable = currentReport && currentReport.status === 'Pending';
+            var status = String((currentReport && currentReport.status) || '').toLowerCase();
+            var editable = currentReport && status === 'pending';
             btn.style.display = editable ? '' : 'none';
         }
     };
@@ -46,7 +51,34 @@
         newLng = null;
 
         $('editReportPhoto').src = currentReport.image_data || 'https://placehold.co/400x300/e0e0e0/a0a0a0?text=No+Photo';
-        $('editReportDesc').value = currentReport.description || '';
+
+        // Pre-fill Type of Waste & Exact Location
+        var parsed = parseReportDescription(currentReport.description);
+        var selectEl = $('editWasteType');
+        var customEl = $('editCustomWasteType');
+
+        var matchedOption = Array.from(selectEl.options).find(function (opt) {
+            return opt.value && opt.value.toLowerCase() === parsed.wasteType.toLowerCase();
+        });
+
+        if (matchedOption) {
+            selectEl.value = matchedOption.value;
+            customEl.style.display = 'none';
+            customEl.required = false;
+            customEl.value = '';
+        } else if (parsed.wasteType) {
+            selectEl.value = 'Other';
+            customEl.style.display = 'block';
+            customEl.required = true;
+            customEl.value = parsed.wasteType;
+        } else {
+            selectEl.value = '';
+            customEl.style.display = 'none';
+            customEl.required = false;
+            customEl.value = '';
+        }
+
+        $('editExactLocation').value = parsed.exactLocation;
         updateCount();
         showLocationText(currentReport.latitude, currentReport.longitude, false);
         showError('');
@@ -69,10 +101,10 @@
     }
 
     function updateCount() {
-        var len = $('editReportDesc').value.length;
+        var len = $('editExactLocation').value.length;
         var counter = $('editReportCount');
-        counter.textContent = len + ' / ' + MAX_DESC;
-        counter.style.color = len >= MAX_DESC ? '#b91c1c' : 'var(--text-muted)';
+        counter.textContent = len + ' / ' + MAX_LOC;
+        counter.style.color = len >= MAX_LOC ? '#b91c1c' : 'var(--text-muted)';
     }
 
     function showLocationText(lat, lng, changed) {
@@ -84,7 +116,7 @@
             chip.innerHTML = '<i class="ti ti-alert-circle"></i> No pin saved.';
             return;
         }
-        chip.classList.add('is-pinned'); // same green "pinned" look as the report form
+        chip.classList.add('is-pinned');
         var text = la.toFixed(6) + ', ' + ln.toFixed(6);
         chip.innerHTML = changed
             ? '<i class="ti ti-check"></i> New pin: ' + text + ' (not saved yet)'
@@ -159,10 +191,10 @@
         var start = (isFinite(lat) && isFinite(lng)) ? [lat, lng] : [11.45, 123.15];
 
         if (!editMap) {
-            var osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 });
-            var satellite = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19 });
-            editMap = L.map('editReportMap', { center: start, zoom: 16, layers: [osm] });
-            L.control.layers({ 'Street View': osm, 'Satellite View': satellite }).addTo(editMap);
+            editMap = L.map('editReportMap', { center: start, zoom: 16 });
+            if (typeof applyMapTileLayers === 'function') {
+                applyMapTileLayers(editMap, 'hybrid');
+            }
             editMap.on('click', function (e) { setNewLocation(e.latlng.lat, e.latlng.lng); });
         } else {
             editMap.setView(start, 16);
@@ -182,20 +214,40 @@
         if (saving || !currentReport) return;
         showError('');
 
-        var description = $('editReportDesc').value.trim();
-        if (!description) { showError('Please describe the problem.'); return; }
-        if (description.length > MAX_DESC) { showError('Please keep the description to ' + MAX_DESC + ' characters or fewer.'); return; }
+        var wasteTypeVal = $('editWasteType').value;
+        var customWasteVal = $('editCustomWasteType').value.trim();
+        var finalWasteType = wasteTypeVal === 'Other' ? customWasteVal : wasteTypeVal;
+        var exactLoc = $('editExactLocation').value.trim();
+
+        if (!wasteTypeVal) { showError('Please select the type of waste.'); return; }
+        if (wasteTypeVal === 'Other' && !customWasteVal) { showError('Please specify the custom waste type.'); return; }
+        if (!exactLoc) { showError('Please enter the exact location.'); return; }
+
+        var combinedDescription = '[Type: ' + finalWasteType + '] Location: ' + exactLoc;
+        if (combinedDescription.length > MAX_DESC) {
+            showError('Please shorten the exact location so the total text stays within ' + MAX_DESC + ' characters.');
+            return;
+        }
 
         var userSession = await localforage.getItem('user_session');
         if (!userSession) { showError('You must be logged in to edit a report.'); return; }
         var residentId = userSession.user_id || userSession.id;
 
-        // send only what changed
         var payload = { resident_id: residentId, report_id: currentReport.report_id };
         var changed = false;
-        if (description !== String(currentReport.description || '').trim()) { payload.description = description; changed = true; }
-        if (newLat !== null && newLng !== null) { payload.latitude = newLat; payload.longitude = newLng; changed = true; }
-        if (newPhotoBase64) { payload.photo = newPhotoBase64; changed = true; }
+        if (combinedDescription !== String(currentReport.description || '').trim()) {
+            payload.description = combinedDescription;
+            changed = true;
+        }
+        if (newLat !== null && newLng !== null) {
+            payload.latitude = newLat;
+            payload.longitude = newLng;
+            changed = true;
+        }
+        if (newPhotoBase64) {
+            payload.photo = newPhotoBase64;
+            changed = true;
+        }
 
         if (!changed) {
             await showAlert('You have not changed anything yet.', { type: 'info', title: 'Nothing to save' });
@@ -258,16 +310,27 @@
 
     // ---------------------------------------------------------------- wire up
     function init() {
-        if (!$('editReportModal')) return; // markup not added to this page
+        if (!$('editReportModal')) return;
+
+        $('editWasteType').addEventListener('change', function () {
+            var customEl = $('editCustomWasteType');
+            if (this.value === 'Other') {
+                customEl.style.display = 'block';
+                customEl.required = true;
+            } else {
+                customEl.style.display = 'none';
+                customEl.required = false;
+                customEl.value = '';
+            }
+        });
 
         $('editReportCameraBtn').addEventListener('click', function () { pickPhoto('CAMERA'); });
         $('editReportGalleryBtn').addEventListener('click', function () { pickPhoto('PHOTOS'); });
         $('editReportGpsBtn').addEventListener('click', useGps);
         $('editReportMapBtn').addEventListener('click', toggleMap);
-        $('editReportDesc').addEventListener('input', updateCount);
+        $('editExactLocation').addEventListener('input', updateCount);
         $('editReportForm').addEventListener('submit', saveChanges);
 
-        // tapping the dark area closes the editor (unless a save is running)
         $('editReportModal').addEventListener('click', function (e) {
             if (e.target === $('editReportModal') && !saving) window.closeEditReportModal();
         });
