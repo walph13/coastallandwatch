@@ -905,20 +905,34 @@ if ($view === 'dashboard') {
                 </div>
             </div>
 
-            <div class="dash-grid">
+         <div class="dash-grid">
                 
                 <div class="flat-card" style="margin-bottom: 0; display: flex; flex-direction: column; padding: 0; overflow: hidden;">
-                    <div class="card-title" style="padding: 24px 24px 16px 24px; margin: 0;">
+                   <div class="card-title" style="padding: 24px 24px 16px 24px; margin: 0; display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap;">
                         <div>
                             <div style="font-size: 16px; color: var(--text-main);">Barangay Map Activity</div>
                             <div style="font-size: 13px; color: var(--text-muted); font-weight: 400; margin-top: 4px;">Real-time geographical tracking</div>
                         </div>
-                        <div style="display: flex; gap: 16px; font-size: 13px; font-weight: 500;">
-                            <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin pending" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Pending</span>
-                            <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin cleaned" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Cleaned</span>
+                        <div style="display: flex; gap: 20px; align-items: center; flex-wrap: wrap; margin-top: 8px;">
+                            <!-- DATE RANGE FILTER -->
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;">From:</span>
+                                <input type="date" id="mapStartDate" class="flat-input" style="padding: 6px 10px; font-size: 13px;">
+                                <span style="font-size: 13px; color: var(--text-muted); font-weight: 500;">To:</span>
+                                <input type="date" id="mapEndDate" class="flat-input" style="padding: 6px 10px; font-size: 13px;">
+                                <button type="button" id="clearMapFilterBtn" class="flat-btn" style="padding: 6px 10px; font-size: 13px; display: none;">Clear</button>
+                            </div>
+                            
+                            <div style="display: flex; gap: 16px; font-size: 13px; font-weight: 500;">
+                                <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin pending" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Pending</span>
+                                <span style="display: flex; align-items: center; gap: 6px;"><svg class="legend-pin cleaned" width="14" height="19" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg> Cleaned</span>
+                            </div>
                         </div>
                     </div>
+                    
+                    <!-- THE MAP DIV MUST BE HERE -->
                     <div id="masterMap" style="flex: 1; min-height: 400px; width: 100%; z-index: 1;"></div>
+                    
                 </div>
 
                 <div style="display: flex; flex-direction: column; gap: 24px;">
@@ -1055,41 +1069,59 @@ if ($view === 'dashboard') {
                             </tr>
                         </thead>
                         <tbody id="reportsTableBody">
-                            <?php
-                            $reports_query = $conn->query("SELECT w.*, COALESCE(u.full_name, 'Deleted user') AS full_name FROM waste_reports w LEFT JOIN users u ON w.resident_id = u.user_id ORDER BY w.created_at DESC");
-                            if($reports_query && $reports_query->num_rows > 0) {
-                                while($row = $reports_query->fetch_assoc()) {
-                                    $raw_date = date('Y-m-d', strtotime($row['created_at']));
-                                    $initial = strtoupper(substr($row['full_name'], 0, 1));
-                                    $is_hl = ($highlight_id > 0 && (int)$row['report_id'] === $highlight_id);
-                                    echo "<tr id='report-" . (int)$row['report_id'] . "' class='report-row" . ($is_hl ? " row-highlight" : "") . "' data-status='" . h($row['status']) . "' data-date='" . h($raw_date) . "'" . ($is_hl ? " aria-current='true'" : "") . ">";
-                                    echo "<td><div class='reporter-cell'><div class='reporter-avatar'>{$initial}</div><span style='font-weight: 600;'>" . htmlspecialchars($row['full_name']) . "</span></div></td>";
-                                    echo "<td style='color: var(--text-muted); font-weight: 500; white-space: nowrap;'>" . date("M d, Y", strtotime($row['created_at'])) . "<div style='font-size: 12px; font-weight: 500; margin-top: 2px; color: var(--text-muted);'><i class='ti ti-clock' style='font-size: 13px; vertical-align: -2px;'></i> " . date("g:i A", strtotime($row['created_at'])) . "</div></td>";
-                                    echo "<td class='desc-cell'>" . h($row['description']) . "</td>";
-                                    echo "<td>";
-                                    if (!empty($row['before_photo_path'])) {
-                                        echo "<a href='uploads/reports/" . h($row['before_photo_path']) . "' target='_blank' rel='noopener' class='photo-link before'><i class='ti ti-photo'></i> Before</a>";
-                                    } else {
-                                        echo "<span style='color: var(--text-muted); font-size: 12px;'>No photo</span>";
-                                    }
-                                    if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
-                                        echo "<a href='uploads/reports/" . h($row['after_photo_path']) . "' target='_blank' rel='noopener' class='photo-link after'><i class='ti ti-photo-check'></i> After</a>";
-                                    }
-                                    echo "</td>";
-                                    if ($row['status'] == 'Pending') {
-                                        echo "<td><span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span></td>";
-                                        echo "<td><a href='resolve_report.php?id=" . $row['report_id'] . "' class='flat-btn primary' style='padding: 6px 14px; font-size: 12px;'>Resolve</a></td>";
-                                    } else {
-                                        echo "<td><span class='status-badge active'><i class='ti ti-check'></i> Cleaned</span></td>";
-                                        echo "<td><span style='color: var(--text-muted); font-size: 13px; font-weight: 500;'><i class='ti ti-archive'></i> Archived</span></td>";
-                                    }
-                                    echo "</tr>";
-                                }
-                            } else {
-                                echo "<tr><td colspan='6' style='text-align: center; padding: 40px;'><i class='ti ti-inbox' style='font-size: 32px; color: #d1d5db; margin-bottom: 8px; display: block;'></i><span style='color: var(--text-muted);'>No records found matching your criteria.</span></td></tr>";
-                            }
-                            ?>
-                        </tbody>
+    <?php
+    // 1. UPDATE SQL QUERY: Added `u.profile_pic` to grab the avatar from the users table
+    $reports_query = $conn->query("SELECT w.*, COALESCE(u.full_name, 'Deleted user') AS full_name, u.profile_pic FROM waste_reports w LEFT JOIN users u ON w.resident_id = u.user_id ORDER BY w.created_at DESC");
+    
+    if($reports_query && $reports_query->num_rows > 0) {
+        while($row = $reports_query->fetch_assoc()) {
+            $raw_date = date('Y-m-d', strtotime($row['created_at']));
+            $initial = strtoupper(substr($row['full_name'], 0, 1));
+            $is_hl = ($highlight_id > 0 && (int)$row['report_id'] === $highlight_id);
+            
+            // 🖼️ 2. NEW AVATAR LOGIC: Use the picture if it exists, otherwise use the first letter
+            $pic = $row['profile_pic'] ?? '';
+            $avatar_html = "<div class='reporter-avatar'>{$initial}</div>"; // Default fallback
+            
+            if (!empty($pic)) {
+                // Handles both Base64 text (from the app) and normal file uploads
+                $avatar_src = (strpos($pic, 'data:image') === 0 || strpos($pic, 'http') === 0) ? $pic : 'uploads/profiles/' . $pic;
+                $avatar_html = "<img src='" . htmlspecialchars($avatar_src) . "' alt='Avatar' style='width: 32px; height: 32px; border-radius: 50%; object-fit: cover;'>";
+            }
+
+            echo "<tr id='report-" . (int)$row['report_id'] . "' class='report-row" . ($is_hl ? " row-highlight" : "") . "' data-status='" . h($row['status']) . "' data-date='" . h($raw_date) . "'" . ($is_hl ? " aria-current='true'" : "") . ">";
+            
+            // 3. INJECT AVATAR HTML HERE:
+            echo "<td><div class='reporter-cell'>{$avatar_html}<span style='font-weight: 600;'>" . htmlspecialchars($row['full_name']) . "</span></div></td>";
+            
+            echo "<td style='color: var(--text-muted); font-weight: 500; white-space: nowrap;'>" . date("M d, Y", strtotime($row['created_at'])) . "<div style='font-size: 12px; font-weight: 500; margin-top: 2px; color: var(--text-muted);'><i class='ti ti-clock' style='font-size: 13px; vertical-align: -2px;'></i> " . date("g:i A", strtotime($row['created_at'])) . "</div></td>";
+            echo "<td class='desc-cell'>" . h($row['description']) . "</td>";
+            
+            echo "<td>";
+            if (!empty($row['before_photo_path'])) {
+                echo "<a href='uploads/reports/" . h($row['before_photo_path']) . "' target='_blank' rel='noopener' class='photo-link before'><i class='ti ti-photo'></i> Before</a>";
+            } else {
+                echo "<span style='color: var(--text-muted); font-size: 12px;'>No photo</span>";
+            }
+            if ($row['status'] === 'Cleaned' && !empty($row['after_photo_path'])) {
+                echo "<a href='uploads/reports/" . h($row['after_photo_path']) . "' target='_blank' rel='noopener' class='photo-link after'><i class='ti ti-photo-check'></i> After</a>";
+            }
+            echo "</td>";
+            
+            if ($row['status'] == 'Pending') {
+                echo "<td><span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span></td>";
+                echo "<td><a href='resolve_report.php?id=" . $row['report_id'] . "' class='flat-btn primary' style='padding: 6px 14px; font-size: 12px;'>Resolve</a></td>";
+            } else {
+                echo "<td><span class='status-badge active'><i class='ti ti-check'></i> Cleaned</span></td>";
+                echo "<td><span style='color: var(--text-muted); font-size: 13px; font-weight: 500;'><i class='ti ti-archive'></i> Archived</span></td>";
+            }
+            echo "</tr>";
+        }
+    } else {
+        echo "<tr><td colspan='6' style='text-align: center; padding: 40px;'><i class='ti ti-inbox' style='font-size: 32px; color: #d1d5db; margin-bottom: 8px; display: block;'></i><span style='color: var(--text-muted);'>No records found matching your criteria.</span></td></tr>";
+    }
+    ?>
+</tbody>
                     </table>
                     <div id="reportsEmpty" class="empty-note" hidden>No reports match your filters.</div>
                 </div>
@@ -1129,48 +1161,62 @@ if ($view === 'dashboard') {
     </tr>
 </thead>
                         <tbody id="residentsTableBody" data-tab="Pending">
-                            <?php
-                            $residents_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status IN ('Pending', 'Approved', 'Rejected') ORDER BY FIELD(account_status, 'Pending', 'Approved', 'Rejected'), full_name ASC");
-                            if ($residents_query && $residents_query->num_rows > 0) {
-                                while ($row = $residents_query->fetch_assoc()) {
-                                    $status = $row['account_status'];
-                                    
-                                    echo "<tr class='resident-row' data-status='{$status}'>";
-                                    echo "<td><strong style='color: var(--text-main);'>" . htmlspecialchars($row['full_name']) . "</strong></td>";
-                                    echo "<td style='color: var(--text-muted); font-weight: 500;'>" . htmlspecialchars($row['username']) . "</td>";
-                                    
-                                    
-                                    echo "<td>";
-                                    if (!empty($row['id_photo_path'])) {
-                                        $id_path = 'uploads/ids/' . htmlspecialchars($row['id_photo_path']);
-                                        echo "<a href='{$id_path}' target='_blank' class='flat-btn' style='padding: 6px 12px; font-size: 12px;'><i class='ti ti-id'></i> View ID</a>";
-                                    } else {
-                                        echo "<span style='color: var(--text-muted); font-size: 12px;'>No ID</span>";
-                                    }
-                                    echo "</td>";
+    <?php
+    $residents_query = $conn->query("SELECT * FROM users WHERE role='Resident' AND account_status IN ('Pending', 'Approved', 'Rejected') ORDER BY FIELD(account_status, 'Pending', 'Approved', 'Rejected'), full_name ASC");
+    if ($residents_query && $residents_query->num_rows > 0) {
+        while ($row = $residents_query->fetch_assoc()) {
+            $status = $row['account_status'];
+            
+            // 🖼️ AVATAR LOGIC: Use picture if exists, else first letter
+            $initial = strtoupper(substr($row['full_name'], 0, 1));
+            
+            // Checking both common column names just in case
+            $pic = $row['profile_pic'] ?? $row['profile_pic_data'] ?? '';
+            $avatar_html = "<div class='reporter-avatar' style='flex-shrink: 0;'>{$initial}</div>"; 
+            
+            if (!empty($pic)) {
+                $avatar_src = (strpos($pic, 'data:image') === 0 || strpos($pic, 'http') === 0) ? $pic : 'uploads/profiles/' . $pic;
+                $avatar_html = "<img src='" . htmlspecialchars($avatar_src) . "' alt='Avatar' style='width: 32px; height: 32px; border-radius: 50%; object-fit: cover; flex-shrink: 0;'>";
+            }
+            
+            echo "<tr class='resident-row' data-status='{$status}'>";
+            
+            // 👤 INJECT AVATAR HTML HERE (wrapping the full name)
+            echo "<td><div class='reporter-cell'>{$avatar_html}<strong style='color: var(--text-main);'>" . htmlspecialchars($row['full_name']) . "</strong></div></td>";
+            
+            echo "<td style='color: var(--text-muted); font-weight: 500;'>" . htmlspecialchars($row['username']) . "</td>";
+            
+            echo "<td>";
+            if (!empty($row['id_photo_path'])) {
+                $id_path = 'uploads/ids/' . htmlspecialchars($row['id_photo_path']);
+                echo "<a href='{$id_path}' target='_blank' class='flat-btn' style='padding: 6px 12px; font-size: 12px;'><i class='ti ti-id'></i> View ID</a>";
+            } else {
+                echo "<span style='color: var(--text-muted); font-size: 12px;'>No ID</span>";
+            }
+            echo "</td>";
 
-                                    echo "<td>";
-                                    if ($status == 'Pending') {
-                                        echo "<span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span>";
-                                    } elseif ($status == 'Rejected') {
-                                        echo "<span class='status-badge rejected'><i class='ti ti-x'></i> Rejected</span>";
-                                    } else {
-                                        echo "<span class='status-badge active'><i class='ti ti-shield-check'></i> Active</span>";
-                                    }
-                                    echo "</td>";
-                                    
-                                    echo "<td>";
-                                    echo "<div class='row-actions'>";
-                                    echo "<button type='button' onclick='openUserModal(" . (int)$row['user_id'] . ")' class='flat-btn' style='padding: 6px 16px; font-size: 12px;'><i class='ti ti-eye'></i> View</button>";
-                                    if ($status === 'Approved') {
-                                        echo "<button type='button' onclick='openDeleteModal(" . (int)$row['user_id'] . ")' class='flat-btn danger' style='padding: 6px 14px; font-size: 12px;' aria-label='Delete account'><i class='ti ti-trash'></i> Delete</button>";
-                                    }
-                                    echo "</div>";
-                                    echo "</td></tr>";
-                                }
-                            }
-                            ?>
-                        </tbody>
+            echo "<td>";
+            if ($status == 'Pending') {
+                echo "<span class='status-badge pending'><i class='ti ti-clock'></i> Pending</span>";
+            } elseif ($status == 'Rejected') {
+                echo "<span class='status-badge rejected'><i class='ti ti-x'></i> Rejected</span>";
+            } else {
+                echo "<span class='status-badge active'><i class='ti ti-shield-check'></i> Active</span>";
+            }
+            echo "</td>";
+            
+            echo "<td>";
+            echo "<div class='row-actions'>";
+            echo "<button type='button' onclick='openUserModal(" . (int)$row['user_id'] . ")' class='flat-btn' style='padding: 6px 16px; font-size: 12px;'><i class='ti ti-eye'></i> View</button>";
+            if ($status === 'Approved') {
+                echo "<button type='button' onclick='openDeleteModal(" . (int)$row['user_id'] . ")' class='flat-btn danger' style='padding: 6px 14px; font-size: 12px;' aria-label='Delete account'><i class='ti ti-trash'></i> Delete</button>";
+            }
+            echo "</div>";
+            echo "</td></tr>";
+        }
+    }
+    ?>
+</tbody>
                     </table>
                 </div>
             </div>
@@ -1988,21 +2034,21 @@ if ($view === 'dashboard') {
         // Default view: Brgy. Tanza, Estancia, Iloilo (used when there are no pins yet)
         const map = L.map('masterMap').setView([11.439, 123.139], 15);
 
-        const roadmapLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-        }).addTo(map);
-
-        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            maxZoom: 19,
-            attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community'
+        // Set up the Google Hybrid Map Layer
+        const hybridLayer = L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '&copy; Google Maps'
         });
 
-        L.control.layers({ 'Roadmap': roadmapLayer, 'Satellite': satelliteLayer }).addTo(map);
+        // Add it to the map
+        hybridLayer.addTo(map);
 
-        // Teardrop map pins (inline SVG, no external images) in the same colours as the legend.
-        // The tip of the pin sits exactly on the report's location.
+// A layer group to hold our markers so we can clear them easily
+        const markerGroup = L.layerGroup().addTo(map);
+
         const PIN_SVG = '<svg class="map-pin %CLS%" width="30" height="42" viewBox="0 0 30 42" aria-hidden="true"><path d="M15 1C7.3 1 1 7.2 1 14.9c0 9.9 11.4 23.4 13.1 25.3a1.2 1.2 0 0 0 1.8 0C17.6 38.3 29 24.8 29 14.9 29 7.2 22.7 1 15 1z"/><circle cx="15" cy="15" r="5.5"/></svg>';
+        
         function pinIcon(status) {
             return L.divIcon({
                 className: 'map-pin-wrap',
@@ -2013,38 +2059,91 @@ if ($view === 'dashboard') {
             });
         }
 
-        const points = [];
-        locations.forEach(function (loc) {
-            const lat = parseFloat(loc.latitude);
-            const lng = parseFloat(loc.longitude);
-            if (!isFinite(lat) || !isFinite(lng)) return;
-            points.push([lat, lng]);
+        // Function to draw pins, filtered by a date range
+        function renderMapPins(start = '', end = '') {
+            markerGroup.clearLayers(); // Remove old pins
+            const points = [];
 
-            const isPending = loc.status === 'Pending';
-            // Pending pin -> straight to the Resolve page. Cleaned pin -> Waste Reports with that row highlighted.
-            const target = isPending
-                ? 'resolve_report.php?id=' + encodeURIComponent(loc.report_id)
-                : 'admin_dashboard.php?view=reports&highlight=' + encodeURIComponent(loc.report_id);
-            const hint = isPending ? 'Click to resolve this report' : 'Click to view it in Waste Reports';
-            const dateStr = new Date(loc.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-            const photo = loc.before_photo_path
-                ? `<img src="uploads/reports/${esc(loc.before_photo_path)}" alt="" style="width:100%; height:90px; object-fit:cover; border-radius:4px; margin-bottom:8px;">`
-                : '';
-            const card = `<div style="text-align:center; min-width:150px; padding:5px; font-family: 'Inter', sans-serif;">${photo}<div style="font-size:12px; color:${isPending ? '#B91C1C' : '#0369A1'}; font-weight:600;">${esc(loc.status)}</div><div style="font-size:11px; text-align:left; color:#687280; margin-top:4px;"><b>${esc(loc.full_name)}</b><br>${esc(dateStr)}</div><div style="font-size:11px; margin-top:6px; color:#0369A1; font-weight:600;">${hint}</div></div>`;
+            locations.forEach(function (loc) {
+                // Check if the report falls within the selected date range
+                if (start || end) {
+                    const locDate = loc.created_at.split(' ')[0]; // Get YYYY-MM-DD
+                    if (start && locDate < start) return; // Skip if it's before the start date
+                    if (end && locDate > end) return;     // Skip if it's after the end date
+                }
 
-            const marker = L.marker([lat, lng], { icon: pinIcon(loc.status), riseOnHover: true }).addTo(map);
-            marker.bindTooltip(card, { direction: 'top', opacity: 1 });
-            marker.on('click', function () { window.location.href = target; });
-            const markerEl = marker.getElement();
-            if (markerEl) markerEl.setAttribute('aria-label', (isPending ? 'Pending' : 'Cleaned') + ' report by ' + loc.full_name + '. ' + hint);
-        });
+                const lat = parseFloat(loc.latitude);
+                const lng = parseFloat(loc.longitude);
+                if (!isFinite(lat) || !isFinite(lng)) return;
+                points.push([lat, lng]);
 
-        // Show every pin instead of only the default area
-        if (points.length > 0) {
-            map.fitBounds(points, { padding: [40, 40], maxZoom: 17 });
+                const isPending = loc.status === 'Pending';
+                const target = isPending
+                    ? 'resolve_report.php?id=' + encodeURIComponent(loc.report_id)
+                    : 'admin_dashboard.php?view=reports&highlight=' + encodeURIComponent(loc.report_id);
+                const hint = isPending ? 'Click to resolve this report' : 'Click to view it in Waste Reports';
+                const dateStr = new Date(loc.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+                const photo = loc.before_photo_path
+                    ? `<img src="uploads/reports/${esc(loc.before_photo_path)}" alt="" style="width:100%; height:90px; object-fit:cover; border-radius:4px; margin-bottom:8px;">`
+                    : '';
+                const card = `<div style="text-align:center; min-width:150px; padding:5px; font-family: 'Inter', sans-serif;">${photo}<div style="font-size:12px; color:${isPending ? '#B91C1C' : '#0369A1'}; font-weight:600;">${esc(loc.status)}</div><div style="font-size:11px; text-align:left; color:#687280; margin-top:4px;"><b>${esc(loc.full_name)}</b><br>${esc(dateStr)}</div><div style="font-size:11px; margin-top:6px; color:#0369A1; font-weight:600;">${hint}</div></div>`;
+
+                const marker = L.marker([lat, lng], { icon: pinIcon(loc.status), riseOnHover: true });
+                marker.bindTooltip(card, { direction: 'top', opacity: 1 });
+                marker.on('click', function () { window.location.href = target; });
+                
+                // Add marker to the layer group
+                markerGroup.addLayer(marker);
+            });
+
+            // Adjust map view to fit the filtered pins, or zoom out if no pins found
+            if (points.length > 0) {
+                map.fitBounds(points, { padding: [40, 40], maxZoom: 17 });
+            } else {
+                map.setView([11.439, 123.139], 15); // Default view when empty
+            }
         }
-        setTimeout(function () { map.invalidateSize(); }, 300);
-    });
+
+        // Draw initial pins (no filter)
+        renderMapPins();
+
+        // Listen for Date Filter Changes
+        const startInput = document.getElementById('mapStartDate');
+        const endInput = document.getElementById('mapEndDate');
+        const clearBtn = document.getElementById('clearMapFilterBtn');
+
+        function updateMapFilter() {
+            const start = startInput.value;
+            const end = endInput.value;
+            
+            // Prevent users from picking an end date that is before the start date
+            if (start) {
+                endInput.min = start;
+            } else {
+                endInput.min = '';
+            }
+            
+            // Show the clear button if either date is selected
+            clearBtn.style.display = (start || end) ? 'inline-block' : 'none';
+            
+            renderMapPins(start, end);
+        }
+
+        if (startInput && endInput && clearBtn) {
+            startInput.addEventListener('change', updateMapFilter);
+            endInput.addEventListener('change', updateMapFilter);
+
+            clearBtn.addEventListener('click', function() {
+                startInput.value = '';
+                endInput.value = '';
+                endInput.min = '';
+                this.style.display = 'none';
+                renderMapPins('', ''); // Clear filter
+            });
+        }
+
+       setTimeout(function () { map.invalidateSize(); }, 300);
+    }); // <-- ADD THIS LINE HERE
 
     // ---------- Reports Overview line chart: reported vs resolved (plain SVG, no extra library) ----------
     (function () {
