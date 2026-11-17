@@ -1,13 +1,3 @@
-// www/js/notify.js
-// Pretty pop-up messages for the whole app.
-//
-//  - Replaces the plain browser alert() with a styled dialog (success / error / warning / info).
-//  - Adds showConfirm() as a styled replacement for confirm().
-//  - Works on every page: just add  <script src="js/notify.js"></script>  in the <head>.
-//
-//  alert("...")        -> shows the dialog (returns a Promise, so `await alert(...)` waits for OK)
-//  showAlert(msg, {type, title, buttonText})
-//  showConfirm(msg, {title, confirmText, cancelText, type}) -> Promise<true|false>
 (function () {
     if (window.__notifyReady) return;
     window.__notifyReady = true;
