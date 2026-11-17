@@ -3,7 +3,7 @@ session_start();
 include 'db_connect.php';
 
 // SECURITY CHECK
-if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'Admin') {
+if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'Admin') {
     die("Unauthorized access.");
 }
 
@@ -13,36 +13,78 @@ if ($check_info && $check_info->num_rows > 0) {
     $info = $check_info->fetch_assoc();
 } else {
     $info = [
-        'barangay_name' => 'Barangay System', 
+        'barangay_name' => 'Tanza', 
         'municipal' => 'Estancia', 
         'city' => 'Iloilo', 
         'logo_path' => ''
     ];
 }
 
-// CHECK FOR DATE FILTERS
-$where_clause = "";
-$date_subtitle = "All Records";
+// READ FILTERS FROM URL (Supports both startDate/endDate from admin_dashboard.php and from/to)
+$startDate = trim($_GET['startDate'] ?? $_GET['from'] ?? '');
+$endDate   = trim($_GET['endDate'] ?? $_GET['to'] ?? '');
+$status    = trim($_GET['status'] ?? 'All');
+$search    = trim($_GET['search'] ?? '');
 
-if (isset($_GET['from']) && isset($_GET['to'])) {
-    $from = $conn->real_escape_string($_GET['from']);
-    $to = $conn->real_escape_string($_GET['to']);
-    
-    // Filter by the selected dates
-    $where_clause = " WHERE DATE(w.created_at) BETWEEN '$from' AND '$to' ";
-    
-    // Format the date for the paper subtitle (e.g., "May 01, 2026 to July 31, 2026")
-    $date_subtitle = "Report Period: " . date("F d, Y", strtotime($from)) . " to " . date("F d, Y", strtotime($to));
+$conditions = [];
+$params     = [];
+$types      = "";
+
+// 1. Date Filter
+if ($startDate !== '' && $endDate !== '') {
+    $conditions[] = "DATE(w.created_at) BETWEEN ? AND ?";
+    $params[] = $startDate;
+    $params[] = $endDate;
+    $types .= "ss";
+    $date_subtitle = "Report Period: " . date("F d, Y", strtotime($startDate)) . " to " . date("F d, Y", strtotime($endDate));
+} elseif ($startDate !== '') {
+    $conditions[] = "DATE(w.created_at) >= ?";
+    $params[] = $startDate;
+    $types .= "s";
+    $date_subtitle = "Report Period: From " . date("F d, Y", strtotime($startDate));
+} elseif ($endDate !== '') {
+    $conditions[] = "DATE(w.created_at) <= ?";
+    $params[] = $endDate;
+    $types .= "s";
+    $date_subtitle = "Report Period: Up to " . date("F d, Y", strtotime($endDate));
+} else {
+    $date_subtitle = "Report Period: All Records";
 }
 
-// FETCH REPORTS WITH FILTER
-$reports_query = $conn->query("
-    SELECT w.*, u.full_name 
+// 2. Status Filter (Pending / Cleaned)
+if ($status !== '' && $status !== 'All') {
+    $conditions[] = "w.status = ?";
+    $params[] = $status;
+    $types .= "s";
+    $date_subtitle .= " (" . htmlspecialchars($status) . " Only)";
+}
+
+// 3. Search Filter (Reporter Name or Description)
+if ($search !== '') {
+    $conditions[] = "(COALESCE(u.full_name, 'Deleted user') LIKE ? OR w.description LIKE ?)";
+    $like = "%" . $search . "%";
+    $params[] = $like;
+    $params[] = $like;
+    $types .= "ss";
+}
+
+$where_clause = count($conditions) > 0 ? " WHERE " . implode(" AND ", $conditions) : "";
+
+// FETCH REPORTS (LEFT JOIN ensures reports from deleted users still appear)
+$sql = "
+    SELECT w.*, COALESCE(u.full_name, 'Deleted user') AS full_name 
     FROM waste_reports w 
-    JOIN users u ON w.resident_id = u.user_id 
+    LEFT JOIN users u ON w.resident_id = u.user_id 
     $where_clause
     ORDER BY w.created_at DESC
-");
+";
+
+$stmt = $conn->prepare($sql);
+if ($types !== "") {
+    $stmt->bind_param($types, ...$params);
+}
+$stmt->execute();
+$reports_query = $stmt->get_result();
 ?>
 <!DOCTYPE html>
 <html lang="en">
@@ -59,41 +101,20 @@ $reports_query = $conn->query("
             padding: 40px;
         }
 
-        /* HEADER STYLES */
-        .document-header {
-            text-align: center;
-            margin-bottom: 40px;
-            border-bottom: 2px solid #000;
-            padding-bottom: 20px;
-            position: relative;
-        }
-        .header-logo {
-            width: 100px;
-            height: 100px;
-            position: absolute;
-            left: 0;
-            top: 0;
-            object-fit: contain;
-        }
-        .republic-text { font-size: 14px; margin: 0 0 5px 0; text-transform: uppercase; }
-        .barangay-text { font-size: 22px; font-weight: bold; margin: 0 0 5px 0; text-transform: uppercase; }
-        .address-text { font-size: 14px; margin: 0; }
-        .document-title { font-size: 20px; font-weight: bold; text-transform: uppercase; margin-top: 20px; letter-spacing: 1px; }
-
         /* TABLE STYLES */
-        table {
+        table.report-table {
             width: 100%;
             border-collapse: collapse;
             margin-top: 20px;
             font-size: 12px;
         }
-        th, td {
+        table.report-table th, table.report-table td {
             border: 1px solid #000;
             padding: 10px;
             text-align: left;
             vertical-align: top;
         }
-        th {
+        table.report-table th {
             background-color: #f2f2f2;
             font-weight: bold;
             text-transform: uppercase;
@@ -114,33 +135,89 @@ $reports_query = $conn->query("
             margin-bottom: 5px;
         }
 
-        /* HIDE BUTTONS WHEN PRINTING */
+        /* CONTROL BAR (Hidden during actual print) */
         .no-print {
-            text-align: center;
-            margin-bottom: 20px;
+            background: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 10px;
+            padding: 14px 20px;
+            margin-bottom: 25px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            align-items: center;
+            gap: 12px;
+            font-family: Arial, sans-serif;
+            font-size: 13px;
+        }
+        .filter-controls {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 8px;
+        }
+        .filter-controls input, .filter-controls select {
+            padding: 6px 10px;
+            border: 1px solid #cbd5e1;
+            border-radius: 6px;
+            font-size: 13px;
+        }
+        .btn-filter {
+            background: #0284c7;
+            color: #fff;
+            border: none;
+            padding: 7px 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: bold;
+        }
+        .btn-clear {
+            background: #e2e8f0;
+            color: #334155;
+            text-decoration: none;
+            padding: 7px 12px;
+            border-radius: 6px;
+            font-weight: bold;
         }
         .btn-print {
             background: #212529;
             color: #fff;
             border: none;
-            padding: 10px 20px;
+            padding: 8px 18px;
             border-radius: 20px;
             cursor: pointer;
-            font-size: 14px;
+            font-size: 13px;
             font-weight: bold;
         }
         @media print {
             body { padding: 0; }
-            .no-print { display: none; }
+            .no-print { display: none !important; }
         }
     </style>
 </head>
 <body>
 
-    <!-- MANUAL PRINT BUTTON (Hidden during actual print) -->
+    <!-- FILTER & PRINT BAR (Hidden when printing) -->
     <div class="no-print">
+        <form method="GET" action="print_report.php" class="filter-controls">
+            <label><strong>From:</strong></label>
+            <input type="date" name="startDate" value="<?php echo htmlspecialchars($startDate); ?>">
+
+            <label><strong>To:</strong></label>
+            <input type="date" name="endDate" value="<?php echo htmlspecialchars($endDate); ?>">
+
+            <select name="status">
+                <option value="All" <?php echo $status === 'All' ? 'selected' : ''; ?>>All Status</option>
+                <option value="Pending" <?php echo $status === 'Pending' ? 'selected' : ''; ?>>Pending</option>
+                <option value="Cleaned" <?php echo $status === 'Cleaned' ? 'selected' : ''; ?>>Cleaned</option>
+            </select>
+
+            <input type="hidden" name="search" value="<?php echo htmlspecialchars($search); ?>">
+            <button type="submit" class="btn-filter">Apply Date</button>
+            <a href="print_report.php" class="btn-clear">Reset</a>
+        </form>
+
         <button class="btn-print" onclick="window.print()">🖨️ Print Document</button>
-        <p style="font-size: 12px; color: #666;">If the print dialog didn't open automatically, click the button above.</p>
     </div>
 
     <!-- OFFICIAL DOCUMENT HEADER -->
@@ -149,7 +226,7 @@ $reports_query = $conn->query("
             <!-- LEFT LOGO -->
             <td style="width: 20%; text-align: left; vertical-align: middle; border: none;">
                 <?php if(!empty($info['logo_path']) && file_exists('uploads/logo/' . $info['logo_path'])): ?>
-                    <img src="uploads/logo/<?php echo $info['logo_path']; ?>" style="width: 100px; height: 100px; object-fit: contain;" alt="Barangay Logo">
+                    <img src="uploads/logo/<?php echo htmlspecialchars($info['logo_path']); ?>" style="width: 100px; height: 100px; object-fit: contain;" alt="Barangay Logo">
                 <?php endif; ?>
             </td>
             
@@ -161,9 +238,8 @@ $reports_query = $conn->query("
                 <p style="margin: 2px 0 0; font-size: 13px; font-style: italic;">Office of the Punong Barangay</p>
             </td>
 
-            <!-- RIGHT LOGO (Blank space to keep the center text perfectly aligned) -->
-            <td style="width: 20%; text-align: right; vertical-align: middle; border: none;">
-            </td>
+            <!-- RIGHT LOGO (Blank space to keep center text aligned) -->
+            <td style="width: 20%; text-align: right; vertical-align: middle; border: none;"></td>
         </tr>
     </table>
 
@@ -173,8 +249,8 @@ $reports_query = $conn->query("
         <p style="font-size: 11px; margin-top: 2px; color: #666;">Generated on: <?php echo date('F d, Y h:i A'); ?></p>
     </div>
 
-    <!-- DATA TABLE (This is the part that was missing!) -->
-    <table>
+    <!-- DATA TABLE -->
+    <table class="report-table">
         <thead>
             <tr>
                 <th style="width: 5%;">ID</th>
@@ -186,10 +262,10 @@ $reports_query = $conn->query("
         </thead>
         <tbody>
             <?php
-            if ($reports_query->num_rows > 0) {
+            if ($reports_query && $reports_query->num_rows > 0) {
                 while ($row = $reports_query->fetch_assoc()) {
                     echo "<tr>";
-                    echo "<td>" . $row['report_id'] . "</td>";
+                    echo "<td>" . (int)$row['report_id'] . "</td>";
                     echo "<td>" . date("M d, Y", strtotime($row['created_at'])) . "<br><small>" . date("h:i A", strtotime($row['created_at'])) . "</small></td>";
                     echo "<td>" . htmlspecialchars($row['full_name']) . "</td>";
                     echo "<td>" . htmlspecialchars($row['description']) . "</td>";
@@ -202,7 +278,7 @@ $reports_query = $conn->query("
                     echo "</tr>";
                 }
             } else {
-                echo "<tr><td colspan='5' style='text-align: center;'>No reports available.</td></tr>";
+                echo "<tr><td colspan='5' style='text-align: center;'>No reports found for the selected date range.</td></tr>";
             }
             ?>
         </tbody>
@@ -212,7 +288,6 @@ $reports_query = $conn->query("
     <div class="print-footer">
         <div style="text-align: center;">
             <p style="text-align: left; margin-bottom: 40px;">Prepared By:</p>
-            
             <strong style="font-size: 14px; text-transform: uppercase;">
                 <?php echo htmlspecialchars(!empty($info['secretary_name']) ? $info['secretary_name'] : '_________________________'); ?>
             </strong>
@@ -222,7 +297,6 @@ $reports_query = $conn->query("
         
         <div style="text-align: center;">
             <p style="text-align: left; margin-bottom: 40px;">Noted By:</p>
-            
             <strong style="font-size: 14px; text-transform: uppercase;">
                 <?php echo htmlspecialchars(!empty($info['captain_name']) ? $info['captain_name'] : '_________________________'); ?>
             </strong>
