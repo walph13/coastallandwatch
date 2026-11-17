@@ -1,7 +1,7 @@
 <?php
 header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, OPTIONS");
 header("Access-Control-Allow-Headers: Content-Type, ngrok-skip-browser-warning");
+header("Access-Control-Allow-Methods: GET, OPTIONS");
 header("Content-Type: application/json; charset=UTF-8");
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
@@ -11,13 +11,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 include 'db_connect.php';
 
-// Fetch the single row of settings from the database
-$result = $conn->query("SELECT * FROM barangay_information LIMIT 1");
+$query = $conn->query("SELECT * FROM barangay_information LIMIT 1");
 
-if ($result && $result->num_rows > 0) {
-    $info = $result->fetch_assoc();
-    echo json_encode(["status" => "success", "data" => $info]);
+if ($query && $query->num_rows > 0) {
+    $row = $query->fetch_assoc();
+    echo json_encode([
+        "status" => "success",
+        "data"   => $row
+    ]);
 } else {
-    echo json_encode(["status" => "error", "message" => "No information available."]);
+    echo json_encode([
+        "status"  => "error",
+        "message" => "No barangay information found."
+    ]);
 }
 ?>
