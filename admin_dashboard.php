@@ -205,15 +205,18 @@ if (isset($_POST['resident_action'], $_POST['id'])) {
     $status_map = ['approve' => 'Approved', 'reject' => 'Rejected'];
     $action = (string)$_POST['resident_action'];
     $return_view = in_array($_POST['return'] ?? '', ['residents', 'dashboard'], true) ? $_POST['return'] : 'residents';
+    $redirect_status = '';
 
     if (isset($status_map[$action])) {
         $new_status = $status_map[$action];
         $stmt = $conn->prepare("UPDATE users SET account_status = ? WHERE user_id = ? AND role = 'Resident'");
         $stmt->bind_param("si", $new_status, $target_id);
-        $stmt->execute();
+        if ($stmt->execute() && $stmt->affected_rows > 0) {
+            $redirect_status = '&status=' . ($action === 'approve' ? 'approved' : 'rejected');
+        }
         $stmt->close();
     }
-    header("Location: admin_dashboard.php?view=" . $return_view);
+    header("Location: admin_dashboard.php?view=" . $return_view . $redirect_status);
     exit();
 }
 
@@ -1127,10 +1130,14 @@ if ($view === 'dashboard') {
                 </div>
             </div>
 
-            <?php elseif ($view == 'residents'): ?>
+           <?php elseif ($view == 'residents'): ?>
             <?php $res_status = (string)($_GET['status'] ?? ''); ?>
-            <?php if ($res_status === 'deleted'): ?>
-                <div id="deleteAlert" class="notice success" role="status"><i class="ti ti-circle-check"></i> User account removed successfully.</div>
+            <?php if ($res_status === 'approved'): ?>
+                <div id="residentStatusAlert" class="notice success" role="status"><i class="ti ti-circle-check"></i> Resident registration approved. The user is now registered and active.</div>
+            <?php elseif ($res_status === 'rejected'): ?>
+                <div id="residentStatusAlert" class="notice warn" role="status"><i class="ti ti-user-x"></i> Resident registration has been rejected.</div>
+            <?php elseif ($res_status === 'deleted'): ?>
+                <div id="residentStatusAlert" class="notice success" role="status"><i class="ti ti-circle-check"></i> User account removed successfully.</div>
             <?php elseif ($res_status === 'blocked'): ?>
                 <div class="notice error" role="alert"><i class="ti ti-alert-circle"></i> This account could not be deleted because other records are still linked to it. You can reject it instead, or check the database links with your developer.</div>
             <?php elseif ($res_status === 'notfound'): ?>
@@ -1765,7 +1772,7 @@ if ($view === 'dashboard') {
         }
     }
 
-    setTimeout(function () { const b = document.getElementById('deleteAlert'); if (b) b.style.display = 'none'; }, 3000);
+    setTimeout(function () { const b = document.getElementById('residentStatusAlert'); if (b) b.style.display = 'none'; }, 3000);
 
     // ---------- Notifications ----------
     let isNotifOpen = false;
