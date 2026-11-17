@@ -13,28 +13,36 @@ if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
 
 include 'db_connect.php';
 
-// Ensure data was actually sent
 if ($_SERVER["REQUEST_METHOD"] == "POST") {
     
-    // Grab the text fields sent from the phone
-    $full_name = $conn->real_escape_string($_POST['full_name']);
-    $username = $conn->real_escape_string($_POST['username']);
-    $password = $_POST['password']; 
-    $phone = $conn->real_escape_string($_POST['phone_number']);
-    $address = $conn->real_escape_string($_POST['address']);
-    $dob = $conn->real_escape_string($_POST['dob']);
+    $full_name = trim($_POST['full_name'] ?? '');
+    $username  = trim($_POST['username'] ?? '');
+    $password  = $_POST['password'] ?? ''; 
+    $phone     = trim($_POST['phone_number'] ?? '');
+    $address   = trim($_POST['address'] ?? '');
+    $dob       = trim($_POST['dob'] ?? '');
 
-    // Encrypt the password!
+    // 1. VALIDATE PHILIPPINE MOBILE NUMBER (Must be 11 digits starting with 09)
+    if (!preg_match('/^09\d{9}$/', $phone)) {
+        echo json_encode(["status" => "error", "message" => "Please enter a valid 11-digit Philippine mobile number starting with 09."]);
+        exit();
+    }
+
+    // Encrypt the password
     $hashed_password = password_hash($password, PASSWORD_BCRYPT);
 
-    // 1. CHECK IF USERNAME EXISTS
-    $check_user = $conn->query("SELECT * FROM users WHERE username = '$username'");
-    if ($check_user->num_rows > 0) {
+    // 2. CHECK IF USERNAME EXISTS (Prepared statement to prevent SQL injection)
+    $check_stmt = $conn->prepare("SELECT user_id FROM users WHERE username = ?");
+    $check_stmt->bind_param("s", $username);
+    $check_stmt->execute();
+    $check_result = $check_stmt->get_result();
+
+    if ($check_result && $check_result->num_rows > 0) {
         echo json_encode(["status" => "error", "message" => "That username is already taken. Please choose another."]);
         exit();
     }
 
-    // 2. HANDLE THE ID PHOTO UPLOAD
+    // 3. HANDLE THE ID PHOTO UPLOAD
     if (isset($_FILES['valid_id']) && $_FILES['valid_id']['error'] === UPLOAD_ERR_OK) {
         $target_dir = "uploads/ids/";
         if (!is_dir($target_dir)) { mkdir($target_dir, 0777, true); }
@@ -50,7 +58,7 @@ if ($_SERVER["REQUEST_METHOD"] == "POST") {
         }
 
         if (move_uploaded_file($_FILES["valid_id"]["tmp_name"], $target_file)) {
-            // 3. SAVE TO THE DATABASE
+            // 4. SAVE TO THE DATABASE WITH 'Pending' STATUS
             $insert_sql = "INSERT INTO users (full_name, username, password, phone_number, address_purok_sitio, date_of_birth, id_photo_path, role, account_status) 
                            VALUES (?, ?, ?, ?, ?, ?, ?, 'Resident', 'Pending')";
             
