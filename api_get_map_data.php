@@ -1,68 +1,96 @@
 <?php
-// ALLOW MOBILE APP TO CONNECT
-header("Access-Control-Allow-Origin: *");
-header("Access-Control-Allow-Methods: GET, OPTIONS");
-header("Access-Control-Allow-Headers: Content-Type, ngrok-skip-browser-warning");
-header("Content-Type: application/json; charset=UTF-8");
+// coastal_land_watch/api_get_map_data.php
+ini_set('display_errors', 0);
+error_reporting(E_ALL);
+
+header('Access-Control-Allow-Origin: *');
+header('Access-Control-Allow-Methods: GET, OPTIONS');
+header('Access-Control-Allow-Headers: Content-Type, ngrok-skip-browser-warning');
+header('Content-Type: application/json; charset=UTF-8');
 
 if ($_SERVER['REQUEST_METHOD'] === 'OPTIONS') {
     http_response_code(200);
-    exit();
+    exit;
 }
 
-include 'db_connect.php';
-
-// Helper function to safely find and convert images (borrowed from your feed script)
-function convertToSafeImage($img_val) {
-    if (empty($img_val) || $img_val === 'null' || $img_val === 'undefined') return null;
-    
-    if (str_starts_with($img_val, 'data:image') || str_starts_with($img_val, 'http://') || str_starts_with($img_val, 'https://')) {
-        return $img_val;
+$conn = null;
+foreach (['db_connect.php', 'db.php', 'config.php', 'conn.php'] as $dbFile) {
+    $path = __DIR__ . '/' . $dbFile;
+    if (file_exists($path)) {
+        require_once $path;
+        break;
     }
+}
 
-    $cleanPath = ltrim($img_val, '/');
-    $possible_folders = ['', 'uploads/', 'uploads/reports/', 'uploads/waste/', 'images/', 'reports/'];
-    
-    foreach ($possible_folders as $folder) {
-        $fullPath = __DIR__ . '/' . $folder . $cleanPath;
-        if (file_exists($fullPath) && !is_dir($fullPath)) {
-            $extension = strtolower(pathinfo($fullPath, PATHINFO_EXTENSION));
-            $mimeType = ($extension === 'png') ? 'image/png' : 'image/jpeg';
-            $fileData = file_get_contents($fullPath);
-            return 'data:' . $mimeType . ';base64,' . base64_encode($fileData);
+if (!isset($conn) || !($conn instanceof mysqli)) {
+    mysqli_report(MYSQLI_REPORT_OFF);
+    foreach (['barangay_waste_reporting', 'coastal_land_watch'] as $dbName) {
+        $tryConn = @new mysqli('localhost', 'root', '', $dbName);
+        if ($tryConn && !$tryConn->connect_error) {
+            $conn = $tryConn;
+            break;
         }
     }
-
-    $ngrok_domain = "https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/";
-    return $ngrok_domain . $cleanPath;
 }
 
-if (isset($_GET['user_id'])) {
-    $user_id = $conn->real_escape_string($_GET['user_id']);
-    
-    // LIMIT 20: Prevents the server from choking on too many reports at once!
-    $query = $conn->query("SELECT * FROM waste_reports WHERE resident_id = '$user_id' ORDER BY created_at DESC LIMIT 20");
+if (!$conn || $conn->connect_error) {
+    echo json_encode(['status' => 'error', 'message' => 'Database connection failed.']);
+    exit;
+}
+$conn->set_charset('utf8mb4');
 
-    $reports = [];
-   if ($query) {
-        while($row = $query->fetch_assoc()) {
-            
-            // Existing Before Photo Logic
-            $raw_photo = $row['before_photo_path'];
-            $row['image_data'] = convertToSafeImage($raw_photo);
-
-            // ADD THIS NEW AFTER PHOTO LOGIC:
-            $raw_after = $row['after_photo_path'];
-            $row['after_image_data'] = convertToSafeImage($raw_after);
-            
-            // 🚨 THIS IS THE MISSING LINE! 
-            // It actually adds the report to the list sent to the app.
-            $reports[] = $row; 
-        }
+// Detect column names dynamically
+$columns = [];
+$colRes = $conn->query("SHOW COLUMNS FROM waste_reports");
+if ($colRes) {
+    while ($row = $colRes->fetch_assoc()) {
+        $columns[] = $row['Field'];
     }
-    
-    echo json_encode(["status" => "success", "data" => $reports]);
-} else {
-    echo json_encode(["status" => "error", "message" => "User ID missing."]);
 }
-?>
+
+$ownerCol = in_array('resident_id', $columns) ? 'resident_id' : (in_array('user_id', $columns) ? 'user_id' : 'NULL');
+$photoCol = in_array('before_photo_path', $columns) ? 'before_photo_path' : (in_array('image_data', $columns) ? 'image_data' : 'NULL');
+$dateCol  = in_array('created_at', $columns) ? 'created_at' : (in_array('timestamp', $columns) ? 'timestamp' : 'NULL');
+
+$sql = "SELECT 
+            report_id,
+            $ownerCol AS resident_id,
+            latitude,
+            longitude,
+            description,
+            status,
+            $photoCol AS raw_photo,
+            $dateCol AS created_at
+        FROM waste_reports
+        WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+        ORDER BY report_id DESC";
+
+$result = $conn->query($sql);
+$data = [];
+
+$protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
+$host = $_SERVER['HTTP_HOST'] ?? '';
+$baseUrl = rtrim($protocol . '://' . $host . dirname($_SERVER['SCRIPT_NAME']), '/');
+
+if ($result) {
+    while ($row = $result->fetch_assoc()) {
+        $photo = $row['raw_photo'] ?? '';
+        if ($photo !== '' && strpos($photo, 'data:image') !== 0 && strpos($photo, 'http') !== 0) {
+            $photo = $baseUrl . '/uploads/reports/' . $photo;
+        }
+
+        $data[] = [
+            'report_id'   => $row['report_id'],
+            'resident_id' => $row['resident_id'],
+            'latitude'    => $row['latitude'],
+            'longitude'   => $row['longitude'],
+            'description' => $row['description'],
+            'status'      => $row['status'],
+            'image_data'  => $photo,
+            'created_at'  => $row['created_at']
+        ];
+    }
+}
+
+echo json_encode(['status' => 'success', 'data' => $data]);
+$conn->close();
