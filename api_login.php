@@ -20,7 +20,7 @@ $password = isset($data->password) ? $data->password : '';
 
 if (!empty($username) && !empty($password)) {
     
-    // 3. Eksaktong logic ng website mo (walang email column na hinahanap)
+    // 3. Hanapin ang user sa database
     $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
     $stmt->bind_param("s", $username);
     $stmt->execute();
@@ -28,20 +28,31 @@ if (!empty($username) && !empty($password)) {
 
     if ($result && $result->num_rows === 1) {
         $user = $result->fetch_assoc();
-        
-        // 4. I-check ang password
-        if (password_verify($password, $user['password']) || $password === $user['password']) {
-            
-            // SECURITY CHECK: I-block kung rejected ang status
-            if ($user['role'] === 'Resident' && $user['account_status'] === 'Rejected') {
+
+        // 4. I-verify muna ang password
+        if (password_verify($password, $user['password'])) {
+
+            // 5. I-check kung Approved na ng Admin ang account
+            $status = strtolower(trim($user['account_status'] ?? 'pending'));
+
+            if ($status === 'pending') {
                 echo json_encode([
-                    "status" => "error", 
-                    "message" => "Your registration was rejected. Please contact the Barangay Hall."
+                    "status" => "error",
+                    "message" => "Your account is still pending Admin approval. Please wait for verification."
                 ]);
                 exit();
             }
 
-            // TAMA LAHAT!
+            if ($status === 'rejected' || $status === 'declined' || $status === 'suspended') {
+                echo json_encode([
+                    "status" => "error",
+                    "message" => "Your account registration was declined. Please contact your Barangay Admin."
+                ]);
+                exit();
+            }
+
+            // TAMA LAHAT AT APPROVED!
+            unset($user['password']); // Para hindi maipadala ang password hash sa app
             echo json_encode([
                 "status" => "success",
                 "user" => $user
