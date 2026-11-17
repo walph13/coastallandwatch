@@ -1,270 +1,250 @@
-<?php
-session_start();
-include 'db_connect.php';
-
-$login_error = '';
-$login_warning = '';
-
-if (isset($_POST['login'])) {
-    $username = trim($_POST['username']);
-    $password = $_POST['password'];
-
-    $stmt = $conn->prepare("SELECT * FROM users WHERE username = ?");
-    $stmt->bind_param("s", $username);
-    $stmt->execute();
-    $result = $stmt->get_result();
-
-    if ($result->num_rows === 1) {
-        $user = $result->fetch_assoc();
-        
-        $is_password_correct = false;
-        if (password_verify($password, $user['password']) || $password === $user['password']) {
-            $is_password_correct = true;
-        }
-
-        if ($is_password_correct) {
-            if ($user['role'] === 'Resident' && $user['account_status'] === 'Rejected') {
-                $login_error = "Your registration was rejected. Please contact the Barangay Hall.";
-            } 
-            else {
-                $_SESSION['user_id'] = $user['user_id'];
-                $_SESSION['role'] = $user['role'];
-
-                if ($user['role'] === 'Admin') {
-                    header("Location: admin_dashboard.php?view=dashboard");
-                } else {
-                    header("Location: resident_dashboard.php");
-                }
-                exit();
-            }
-        } else {
-            $login_error = "Incorrect password.";
-        }
-    } else {
-        $login_error = "Username not found.";
-    }
-}
-
-$check_info = $conn->query("SELECT * FROM barangay_information LIMIT 1");
-if ($check_info && $check_info->num_rows > 0) {
-    $info = $check_info->fetch_assoc();
-} else {
-    $info = [];
-}
-
-$login_logo = !empty($info['logo_path']) ? 'uploads/logo/' . $info['logo_path'] : 'tanzalogo.jpg';
-$system_title = !empty($info['system_subtitle']) ? $info['system_subtitle'] : 'Barangay Coastal & Land Watch';
-?>
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="theme-color" content="#3F4D67">
-    <title>System Login - Coastal & Land Watch</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>Login - Coastal Land Watch</title>
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@latest/tabler-icons.min.css">
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/localforage/1.10.0/localforage.min.js"></script>
+
+    <script src="js/notify.js"></script>
 
     <style>
         :root {
+            --bg-body: #f4f6fa;
+            --bg-surface: #ffffff;
             --primary: #0ea5e9;
-            --primary-light: #e0f2fe;
             --primary-dark: #0284c7;
+            --primary-light: #e0f2fe;
             --brand-slate: #3F4D67;
+            --brand-slate-deep: #2c3850;
+            --red-dark: #b91c1c;
+            --red-light: #fef2f2;
             --text-main: #172033;
             --text-muted: #64748b;
-            --border-color: #d9e1ec;
+            --border-color: #e8ecf3;
+            --safe-top: env(safe-area-inset-top, 0px);
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
         }
 
-        * { box-sizing: border-box; }
+        * { -webkit-tap-highlight-color: transparent; box-sizing: border-box; }
 
         body {
             font-family: 'Inter', sans-serif;
-            margin: 0; min-height: 100vh;
-            display: flex; flex-direction: column; align-items: center; justify-content: center;
-            padding: 28px 16px;
+            background: var(--bg-body);
+            margin: 0; padding: 0; min-height: 100vh;
+            display: flex; flex-direction: column;
             color: var(--text-main);
             overflow-x: hidden;
             -webkit-font-smoothing: antialiased;
-            /* soft slate-tinted backdrop */
-            background:
-                radial-gradient(900px 560px at 12% 8%, rgba(63, 77, 103, 0.16), transparent 62%),
-                radial-gradient(800px 520px at 92% 92%, rgba(14, 165, 233, 0.16), transparent 60%),
-                linear-gradient(135deg, #eef2f8 0%, #dde6f1 100%);
         }
 
-        /* The barangay logo, huge and faded, sitting behind everything */
-        .bg-logo {
-            position: fixed; top: 50%; left: 50%; z-index: 0;
-            width: min(112vmin, 860px); height: min(112vmin, 860px);
-            transform: translate(-50%, -50%);
-            object-fit: contain; border-radius: 50%;
-            opacity: 0.2; filter: blur(1.5px);
-            mix-blend-mode: multiply;          /* the white of the JPG disappears into the background */
-            pointer-events: none; user-select: none;
+        /* ===== CURVED HEADER ===== */
+        .hero { position: relative; height: calc(var(--safe-top) + 250px); flex-shrink: 0; color: #fff; }
+        .hero-curve { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+        .hero-inner { position: relative; z-index: 2; padding: calc(var(--safe-top) + 78px) 28px 0; }
+
+        .back-btn {
+            position: absolute; z-index: 3; top: calc(var(--safe-top) + 18px); left: 20px;
+            width: 42px; height: 42px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            color: #fff; text-decoration: none; font-size: 20px;
+            background: rgba(255, 255, 255, 0.14); border: 1px solid rgba(255, 255, 255, 0.25);
+            transition: background 0.2s;
         }
+        .back-btn:active { background: rgba(255, 255, 255, 0.28); }
 
-        .stage { position: relative; z-index: 1; width: 100%; max-width: 400px; }
+        .brand { font-size: 22px; font-weight: 500; letter-spacing: 0.22em; line-height: 1.35; text-transform: uppercase; }
+        .hero p { margin: 10px 0 0; font-size: 14px; font-weight: 500; color: rgba(255, 255, 255, 0.78); line-height: 1.5; max-width: 270px; }
 
-        .login-card {
-            background: rgba(255, 255, 255, 0.96);
-            -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
-            border-radius: 24px;
-            padding: 34px 30px 30px;
-            box-shadow: 0 28px 60px -14px rgba(30, 41, 59, 0.32), 0 2px 8px rgba(30, 41, 59, 0.06);
-            border: 1px solid rgba(255, 255, 255, 0.8);
-            animation: cardIn 0.5s ease both;
+        /* ===== PAGE BODY ===== */
+        .page { flex: 1; display: flex; flex-direction: column; padding: 6px 24px calc(28px + var(--safe-bottom)); }
+        .page h2 { margin: 0 0 22px; font-size: 32px; font-weight: 600; letter-spacing: -0.8px; color: var(--text-main); }
+
+        .input-label { font-size: 13.5px; font-weight: 600; color: var(--text-main); margin: 0 0 8px; display: block; }
+
+        .input-field {
+            background: #ffffff; border: 1.5px solid transparent; border-radius: 16px;
+            padding: 16px; font-size: 14px; font-family: inherit; font-weight: 500;
+            color: var(--text-main); width: 100%; margin-bottom: 18px;
+            box-shadow: 0 4px 16px rgba(23, 32, 51, 0.07); transition: 0.2s; appearance: none; -webkit-appearance: none;
         }
-        @keyframes cardIn { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+        .input-field::placeholder { color: #a3adbd; font-weight: 400; }
+        .input-field:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-light); }
+        input[type="date"].input-field { min-height: 52px; }
 
-        .logo-wrapper {
-            width: 88px; height: 88px; margin: 0 auto 16px;
-            border-radius: 50%; background: #fff;
-            border: 3px solid var(--primary-light);
-            box-shadow: 0 8px 22px rgba(63, 77, 103, 0.22);
-            overflow: hidden;
-        }
-        .logo-wrapper img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .pw-wrap { position: relative; margin-bottom: 14px; }
+        .pw-wrap .input-field { margin-bottom: 0; padding-right: 48px; }
+        .pw-wrap i { position: absolute; right: 16px; top: 50%; transform: translateY(-50%); font-size: 20px; color: var(--text-muted); cursor: pointer; }
 
-        .header-text { text-align: center; margin-bottom: 26px; }
-        .badge {
-            display: inline-block; background: var(--brand-slate); color: #fff;
-            font-size: 18px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase;
-            padding: 6px 18px; border-radius: 8px; margin-bottom: 12px;
-        }
-        .header-text p {
-            margin: 0; font-size: 11.5px; font-weight: 700; letter-spacing: 0.07em;
-            text-transform: uppercase; color: var(--brand-slate); line-height: 1.6;
-        }
-
-        .form-group { margin-bottom: 16px; }
-        .form-label { display: block; font-weight: 600; color: var(--text-main); font-size: 13px; margin-bottom: 8px; }
-
-        .custom-input {
-            width: 100%; height: 50px; padding: 0 14px;
-            border-radius: 12px; border: 1.5px solid var(--border-color);
-            background: #fff; color: var(--text-main);
-            font-size: 14px; font-family: inherit; transition: 0.2s;
-        }
-        .custom-input::placeholder { color: #a3adbd; }
-        .custom-input:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 4px var(--primary-light); }
-
-        .input-group { position: relative; }
-        .input-group .custom-input { padding-right: 46px; }
-        .custom-input-btn {
-            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
-            width: 38px; height: 38px; border: none; background: transparent; border-radius: 8px;
-            color: var(--text-muted); font-size: 19px; cursor: pointer;
-            display: flex; align-items: center; justify-content: center; transition: 0.2s;
-        }
-        .custom-input-btn:hover { color: var(--text-main); background: #f1f5f9; }
-
-        .btn-login {
-            width: 100%; height: 50px; margin-top: 8px;
-            border: none; border-radius: 12px; cursor: pointer;
+        .btn-main {
             background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            color: #fff; font-family: inherit; font-size: 14px; font-weight: 700;
-            letter-spacing: 0.1em; text-transform: uppercase;
-            box-shadow: 0 10px 22px rgba(14, 165, 233, 0.32);
-            transition: transform 0.18s ease, box-shadow 0.18s ease, filter 0.18s ease;
+            color: #ffffff; border: none; border-radius: 999px;
+            padding: 17px; width: 100%; font-size: 15px; font-weight: 600; font-family: inherit;
+            cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;
+            box-shadow: 0 10px 22px rgba(14, 165, 233, 0.32); margin-top: 6px;
         }
-        .btn-login:hover { transform: translateY(-2px); box-shadow: 0 14px 28px rgba(14, 165, 233, 0.4); filter: brightness(1.04); }
-        .btn-login:active { transform: translateY(0) scale(0.98); }
-        .btn-login:disabled { opacity: 0.7; cursor: wait; transform: none; }
+        .btn-main:active { transform: scale(0.98); box-shadow: 0 5px 12px rgba(14, 165, 233, 0.3); }
+        .btn-main:disabled { background: #cbd5e1; box-shadow: none; cursor: not-allowed; }
 
-        .alert { border-radius: 12px; font-size: 13px; font-weight: 500; text-align: center; padding: 12px; margin-bottom: 20px; display: flex; align-items: center; justify-content: center; gap: 8px; line-height: 1.4; }
-        .alert-danger { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
-        .alert-warning { background: #fffbeb; color: #b45309; border: 1px solid #fde68a; }
+        .switch-link { margin-top: auto; padding-top: 26px; text-align: center; font-size: 13.5px; color: var(--text-muted); text-decoration: none; display: block; font-weight: 500; }
+        .switch-link span { color: var(--brand-slate); font-weight: 700; }
 
-        .page-footer { margin-top: 22px; text-align: center; font-size: 12px; line-height: 1.7; color: #55657d; }
-
-        @media (max-width: 420px) {
-            .login-card { padding: 30px 22px 26px; }
-            .badge { font-size: 16px; }
+        /* hero is a little taller on the login screen */
+        .hero { height: calc(var(--safe-top) + 300px); }
+        .hero-inner { padding-top: calc(var(--safe-top) + 30px); }
+        .brand-logo {
+            width: 54px; height: 54px; object-fit: cover; border-radius: 50%; display: block; margin-bottom: 26px;
+            border: 3px solid rgba(255, 255, 255, 0.35); background: #fff; box-shadow: 0 6px 16px rgba(0, 0, 0, 0.2);
         }
-        @media (prefers-reduced-motion: reduce) {
-            .login-card { animation: none; }
-            .btn-login { transition: none; }
+        .page { padding-top: 0; }
+
+        .pw-wrap button {
+            position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+            width: 42px; height: 42px; border: none; background: transparent;
+            color: var(--text-muted); font-size: 20px; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
         }
-    </style>
+        .pw-wrap button i { position: static; transform: none; font-size: 20px; color: inherit; }
+        .pw-wrap { margin-bottom: 10px; }
+
+        .forgot-row { text-align: right; margin-bottom: 22px; }
+        .forgot-link { font-size: 13px; font-weight: 600; color: var(--brand-slate); text-decoration: none; }
+        .forgot-link:active { color: var(--primary); }
+
+        #loginError {
+            display: none; border-radius: 14px; font-size: 13.5px; font-weight: 500; text-align: center;
+            background: var(--red-light); color: var(--red-dark); padding: 14px; margin-bottom: 20px; line-height: 1.45;
+        }
+        .spinner { display: inline-block; animation: spin 0.9s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+</style>
 </head>
 <body>
 
-    <img class="bg-logo" src="tanzalogo.jpg" alt="" aria-hidden="true" onerror="this.style.display='none'">
-
-    <div class="stage">
-        <div class="login-card">
-
-            <div class="logo-wrapper">
-                <img src="<?php echo htmlspecialchars($login_logo); ?>" alt="Barangay Tanza logo" onerror="this.onerror=null; this.src='tanzalogo.jpg'">
-            </div>
-
-            <div class="header-text">
-                <span class="badge">Admin Portal</span>
-                <p><?php echo htmlspecialchars($system_title); ?></p>
-            </div>
-
-            <?php if(!empty($login_warning)): ?>
-                <div class="alert alert-warning" role="alert"><i class="ti ti-alert-triangle"></i> <?php echo $login_warning; ?></div>
-            <?php endif; ?>
-
-            <?php if(!empty($login_error)): ?>
-                <div class="alert alert-danger" role="alert"><i class="ti ti-alert-circle"></i> <?php echo $login_error; ?></div>
-            <?php endif; ?>
-
-            <form method="POST" action="" id="loginForm">
-                <!-- sent even when the button is disabled while logging in -->
-                <input type="hidden" name="login" value="1">
-
-                <div class="form-group">
-                    <label class="form-label" for="usernameInput">Username</label>
-                    <input type="text" name="username" id="usernameInput" class="custom-input" placeholder="Enter your username" autocomplete="username" required autofocus>
-                </div>
-
-                <div class="form-group">
-                    <label class="form-label" for="passwordInput">Password</label>
-                    <div class="input-group">
-                        <input type="password" name="password" id="passwordInput" class="custom-input" placeholder="••••••••" autocomplete="current-password" required>
-                        <button class="custom-input-btn" type="button" id="togglePassword" aria-label="Show or hide password">
-                            <i class="ti ti-eye"></i>
-                        </button>
-                    </div>
-                </div>
-
-                <button type="submit" name="login" class="btn-login" id="loginBtn">Log In</button>
-            </form>
-
+    <div class="hero">
+        <svg class="hero-curve" viewBox="0 0 390 300" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+                <linearGradient id="heroGrad" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0%" stop-color="#2c3850"/>
+                    <stop offset="60%" stop-color="#3F4D67"/>
+                    <stop offset="100%" stop-color="#4a5c7c"/>
+                </linearGradient>
+            </defs>
+            <path d="M0,0 H390 V70 C382,190 305,282 190,288 C108,292 44,252 0,205 Z" fill="url(#heroGrad)"/>
+            <circle cx="345" cy="40" r="90" fill="rgba(255,255,255,0.06)"/>
+            <circle cx="30" cy="225" r="70" fill="rgba(14,165,233,0.16)"/>
+        </svg>
+        <div class="hero-inner">
+            <img src="tanzalogo.jpg" alt="Logo" class="brand-logo" onerror="this.style.display='none'">
+            <div class="brand">Coastal<br>Land Watch</div>
+            <p>Welcome back! Log in to continue.</p>
         </div>
+    </div>
 
-        <div class="page-footer">
-            &copy; <?php echo date('Y'); ?> Barangay Tanza, Estancia, Iloilo<br>
-            Coastal &amp; Land Watch &middot; Admin Portal
+    <div class="page">
+        <h2>Login</h2>
+
+        <div id="loginError"><i class="ti ti-alert-circle"></i> <span id="errorText"></span></div>
+
+        <form id="loginForm">
+            <label class="input-label">Username</label>
+            <input type="text" id="username" name="username" class="input-field" placeholder="Enter your username" autocomplete="username" required>
+
+            <label class="input-label">Password</label>
+            <div class="pw-wrap">
+                <input type="password" id="password" name="password" class="input-field" placeholder="••••••••" autocomplete="current-password" required>
+                <button type="button" id="togglePassword"><i class="ti ti-eye"></i></button>
+            </div>
+
+            <div class="forgot-row">
+                <a href="forgot_password.html" class="forgot-link">Forgot Password?</a>
+            </div>
+
+            <button type="submit" id="loginBtn" class="btn-main">Log In</button>
+        </form>
+
+        <div class="switch-link">
+            Don't have an account? <a href="register.html" style="text-decoration:none;"><span>Register Here</span></a>
         </div>
     </div>
 
     <script>
         const togglePassword = document.querySelector('#togglePassword');
-        const password = document.querySelector('#passwordInput');
-
+        const password = document.querySelector('#password');
         togglePassword.addEventListener('click', function () {
             const type = password.getAttribute('type') === 'password' ? 'text' : 'password';
             password.setAttribute('type', type);
             this.innerHTML = type === 'password' ? '<i class="ti ti-eye"></i>' : '<i class="ti ti-eye-off"></i>';
         });
+    </script>
+    
+    <script>
+        document.getElementById('loginForm').addEventListener('submit', async function(e) {
+            e.preventDefault(); 
+            const loginBtn = document.getElementById('loginBtn');
+            const errorBox = document.getElementById('loginError');
+            const errorText = document.getElementById('errorText');
+            const usernameVal = document.getElementById('username').value;
+            const passwordVal = document.getElementById('password').value;
 
-        // show "Logging in..." and stop double clicks
-        document.getElementById('loginForm').addEventListener('submit', function () {
-            const btn = document.getElementById('loginBtn');
-            setTimeout(function () { btn.disabled = true; btn.textContent = 'Logging in...'; }, 0);
-        });
-        // coming back with the browser's Back button should not leave the button stuck
-        window.addEventListener('pageshow', function (e) {
-            if (e.persisted) { const btn = document.getElementById('loginBtn'); btn.disabled = false; btn.textContent = 'Log In'; }
+            loginBtn.disabled = true;
+            loginBtn.innerHTML = '<i class="ti ti-loader spinner"></i> Verifying...';
+            errorBox.style.display = 'none';
+
+            try {
+                let response = await fetch('https://unaired-undrilled-shortly.ngrok-free.dev/coastal_land_watch/api_login.php', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'text/plain', 'ngrok-skip-browser-warning': 'true' },
+                    body: JSON.stringify({ username: usernameVal, password: passwordVal })
+                });
+
+                let rawText = await response.text();
+                let result;
+                try { result = JSON.parse(rawText); } 
+                catch(err) {
+                    errorText.innerText = "Server Error. Check console.";
+                    errorBox.style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = 'Log In';
+                    return;
+                }
+
+                if (result.status === 'success') {
+                    // If the server does not send the profile picture, restore the copy saved on this phone
+                    try {
+                        const picKey = 'profile_pic_' + (result.user.user_id || result.user.id);
+                        if (result.user.profile_pic_data) {
+                            await localforage.setItem(picKey, result.user.profile_pic_data);
+                        } else {
+                            const savedPic = await localforage.getItem(picKey);
+                            if (savedPic) result.user.profile_pic_data = savedPic;
+                        }
+                    } catch (picError) { console.error('Profile picture restore failed:', picError); }
+
+                    await localforage.setItem('user_session', result.user);
+                    window.location.replace('index.html');
+                } else {
+                    errorText.innerText = result.message;
+                    errorBox.style.display = 'block';
+                    loginBtn.disabled = false;
+                    loginBtn.innerHTML = 'Log In';
+                }
+            } catch (error) {
+                errorText.innerText = "Network Error. Please check your internet connection.";
+                errorBox.style.display = 'block';
+                loginBtn.disabled = false;
+                loginBtn.innerHTML = 'Log In';
+            }
         });
     </script>
+    
+    <script src="js/app.js"></script>
 </body>
 </html>
