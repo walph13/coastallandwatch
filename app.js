@@ -328,16 +328,122 @@ async function logoutUser() {
     }
 }
 
-// 🗺️ COMMUNITY MAP LOGIC
+// ==========================================
+// 🗺️ COMMUNITY MAP & SAVED FILTER LOGIC
+// ==========================================
 let communityMap = null;
 let communityMarkersLayer = null;
 
+const DEFAULT_MAP_FILTERS = {
+    type: 'all',
+    startDate: '',
+    endDate: ''
+};
+
+async function getSavedMapFilters() {
+    try {
+        const saved = await localforage.getItem('community_map_filters');
+        return saved ? { ...DEFAULT_MAP_FILTERS, ...saved } : { ...DEFAULT_MAP_FILTERS };
+    } catch (e) {
+        return { ...DEFAULT_MAP_FILTERS };
+    }
+}
+
+async function fetchFilteredMapPins(filters) {
+    const userSession = await localforage.getItem('user_session');
+    const activeUserId = userSession ? String(userSession.user_id || userSession.id || '') : '';
+    let pins = [];
+
+    if (filters.type === 'mine') {
+        if (!activeUserId) return [];
+        const res = await fetch(`${API_BASE_URL}/api_get_history.php?user_id=${encodeURIComponent(activeUserId)}`, {
+            method: 'GET',
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        const data = await res.json();
+        if (data.status !== 'success') throw new Error(data.message || 'Could not load your reports.');
+        pins = data.data || [];
+    } else {
+        const res = await fetch(`${API_BASE_URL}/api_get_map_data.php`, {
+            method: 'GET',
+            headers: { 'ngrok-skip-browser-warning': 'true' }
+        });
+        const data = await res.json();
+        if (data.status !== 'success') throw new Error(data.message || 'Could not load map reports.');
+        pins = data.data || [];
+    }
+
+    if (filters.startDate) {
+        const startMs = new Date(filters.startDate + 'T00:00:00').getTime();
+        pins = pins.filter(p => {
+            const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
+            return !Number.isNaN(reportMs) && reportMs >= startMs;
+        });
+    }
+
+    if (filters.endDate) {
+        const endMs = new Date(filters.endDate + 'T23:59:59.999').getTime();
+        pins = pins.filter(p => {
+            const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
+            return !Number.isNaN(reportMs) && reportMs <= endMs;
+        });
+    }
+
+    return pins.filter(p => isFinite(parseFloat(p.latitude)) && isFinite(parseFloat(p.longitude)));
+}
+
+function renderPinsToMap(mapInstance, layerGroup, pins, fitView = false) {
+    if (!mapInstance || !layerGroup) return;
+    layerGroup.clearLayers();
+
+    const redPin = new L.Icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34]
+    });
+    const greenPin = new L.Icon({
+        iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png',
+        shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png',
+        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34]
+    });
+
+    const bounds = [];
+    pins.forEach(loc => {
+        const lat = parseFloat(loc.latitude);
+        const lng = parseFloat(loc.longitude);
+        bounds.push([lat, lng]);
+
+        const isPending = String(loc.status || '').toLowerCase() === 'pending';
+        const marker = L.marker([lat, lng], { icon: isPending ? redPin : greenPin }).addTo(layerGroup);
+        const imageUrl = loc.image_data ? loc.image_data : 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
+        const rawDate = loc.created_at || loc.timestamp || '';
+        const dateLabel = rawDate ? new Date(String(rawDate).replace(' ', 'T')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
+
+        marker.bindPopup(`
+            <div style="text-align:center; min-width: 150px; font-family: 'Segoe UI', Arial, sans-serif;">
+                <img src="${imageUrl}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 8px; margin-bottom: 8px; border: 1px solid #ccc;">
+                <div style="font-size: 14px; color: ${isPending ? '#dc3545' : '#28a745'}; font-weight: bold; margin-bottom: 4px;">
+                    ${isPending ? '🔴 Pending' : '✅ Cleaned'}
+                </div>
+                ${dateLabel ? `<div style="font-size:11px; color:#888; margin-bottom:4px;">${dateLabel}</div>` : ''}
+                <div style="font-size: 12px; text-align: left; color: #555;">
+                    <b>Desc:</b> "${escapeHtml(loc.description)}"
+                </div>
+            </div>
+        `);
+    });
+
+    if (fitView && bounds.length > 0) {
+        mapInstance.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
+    }
+}
+
 async function loadCommunityMap() {
     const mapContainer = document.getElementById('communityMap');
-    if (!mapContainer) return; 
+    if (!mapContainer) return;
 
     if (!communityMap) {
-        communityMap = L.map('communityMap').setView([11.45, 123.15], 13); 
+        communityMap = L.map('communityMap').setView([11.45, 123.15], 13);
         applyMapTileLayers(communityMap, 'hybrid');
         communityMarkersLayer = L.layerGroup().addTo(communityMap);
         setTimeout(() => {
@@ -346,45 +452,9 @@ async function loadCommunityMap() {
     }
 
     try {
-        let response = await fetch(`${API_BASE_URL}/api_get_map_data.php`, {
-            method: 'GET',
-            headers: { 'ngrok-skip-browser-warning': 'true' }
-        });
-        
-        let result = await response.json();
-
-        if (result.status === 'success') {
-            if (communityMarkersLayer) {
-                communityMarkersLayer.clearLayers();
-            } else {
-                communityMarkersLayer = L.layerGroup().addTo(communityMap);
-            }
-
-            let mapData = result.data;
-            var redPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
-            var greenPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
-
-            mapData.forEach(function(loc) {
-                var isPending = String(loc.status || '').toLowerCase() === 'pending';
-                var currentIcon = isPending ? redPin : greenPin; 
-                var marker = L.marker([loc.latitude, loc.longitude], {icon: currentIcon}).addTo(communityMarkersLayer);
-                
-                let imageUrl = loc.image_data ? loc.image_data : 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
-
-                var popupContent = `
-                    <div style="text-align:center; min-width: 150px; font-family: 'Segoe UI', Arial, sans-serif;">
-                        <img src="${imageUrl}" style="width: 100%; height: 100px; object-fit: cover; border-radius: 8px; margin-bottom: 8px; border: 1px solid #ccc;">
-                        <div style="font-size: 14px; color: ${isPending ? '#dc3545' : '#28a745'}; font-weight: bold; margin-bottom: 4px;">
-                            ${isPending ? '🔴 Pending' : '✅ Cleaned'}
-                        </div>
-                        <div style="font-size: 12px; text-align: left; color: #555;">
-                            <b>Desc:</b> "${escapeHtml(loc.description)}"
-                        </div>
-                    </div>
-                `;
-                marker.bindPopup(popupContent);
-            });
-        }
+        const filters = await getSavedMapFilters();
+        const pins = await fetchFilteredMapPins(filters);
+        renderPinsToMap(communityMap, communityMarkersLayer, pins, false);
     } catch (error) {
         console.error("Could not load community map: ", error);
     }
@@ -610,18 +680,43 @@ if (editForm) {
         const userSession = await localforage.getItem('user_session');
         if (!userSession) return;
 
+        const fullName = document.getElementById('edit_fullname').value.trim();
+        const username = document.getElementById('edit_username').value.trim();
+        const password = document.getElementById('edit_password').value;
+        const phone    = document.getElementById('edit_phone').value.trim();
+        const dob      = document.getElementById('edit_dob').value.trim();
+        const address  = document.getElementById('edit_address').value.trim();
+
+        // 1. Block empty required fields
+        if (!fullName || !username || !phone || !dob || !address) {
+            alert("⚠️ Please fill in all required fields (Full Name, Username, Phone Number, Date of Birth, and Address).");
+            return;
+        }
+
+        // 2. Validate 11-digit PH mobile number
+        if (!/^09\d{9}$/.test(phone)) {
+            alert("⚠️ Please enter a valid 11-digit Philippine mobile number starting with 09 (e.g., 09171234567).");
+            return;
+        }
+
+        // 3. Validate new password only if user typed one
+        if (password.length > 0 && (password.length < 8 || !/[a-zA-Z]/.test(password) || !/[0-9]/.test(password))) {
+            alert("⚠️ New password must be at least 8 characters and include both a letter and a number.");
+            return;
+        }
+
         const submitBtn = editForm.querySelector('button[type="submit"]');
         submitBtn.disabled = true;
         submitBtn.innerText = "Saving...";
 
         const payload = {
             user_id: userSession.user_id || userSession.id,
-            full_name: document.getElementById('edit_fullname').value,
-            username: document.getElementById('edit_username').value,
-            password: document.getElementById('edit_password').value,
-            phone_number: document.getElementById('edit_phone').value,
-            date_of_birth: document.getElementById('edit_dob').value,
-            address_purok_sitio: document.getElementById('edit_address').value,
+            full_name: fullName,
+            username: username,
+            password: password,
+            phone_number: phone,
+            date_of_birth: dob,
+            address_purok_sitio: address,
             profile_pic: editProfilePicBase64 || userSession.profile_pic_data
         };
 
@@ -658,7 +753,7 @@ if (editForm) {
                 if (typeof loadProfileDisplay === 'function') loadProfileDisplay();
                 if (typeof loadHomeProfile === 'function') loadHomeProfile();
             } else {
-                alert("Database Error: " + result.message);
+                alert("⚠️ Error: " + result.message);
             }
         } catch (error) {
             console.error("Update profile error:", error);
@@ -1459,10 +1554,19 @@ function parseReportDateMs(rawDate) {
     return new Date(normalized).getTime();
 }
 
-function openFilteredMapModal() {
+async function openFilteredMapModal() {
     const modal = document.getElementById('filteredMapModal');
     if (!modal) return;
     modal.style.display = 'flex';
+
+    // Restore previously saved filter values into the modal dropdown/inputs
+    const saved = await getSavedMapFilters();
+    const typeEl = document.getElementById('profileMapFilterType');
+    const startEl = document.getElementById('profileMapFilterStartDate');
+    const endEl = document.getElementById('profileMapFilterEndDate');
+    if (typeEl) typeEl.value = saved.type;
+    if (startEl) startEl.value = saved.startDate;
+    if (endEl) endEl.value = saved.endDate;
 
     if (!profileFilteredMap) {
         profileFilteredMap = L.map('profileFilteredMap').setView([11.45, 123.15], 13);
@@ -1471,7 +1575,7 @@ function openFilteredMapModal() {
     }
     setTimeout(() => {
         profileFilteredMap.invalidateSize();
-        applyProfileMapFilters();
+        applyProfileMapFilters(true);
     }, 300);
 }
 
@@ -1480,116 +1584,43 @@ function closeFilteredMapModal() {
     if (modal) modal.style.display = 'none';
 }
 
-async function applyProfileMapFilters() {
+async function applyProfileMapFilters(isSilentInit = false) {
     if (!profileFilteredMap) return;
 
-    const filterType = document.getElementById('profileMapFilterType')?.value || 'all';
-    const startDate = document.getElementById('profileMapFilterStartDate')?.value || '';
-    const endDate = document.getElementById('profileMapFilterEndDate')?.value || '';
-    const applyBtn = document.getElementById('applyProfileMapFiltersBtn');
+    const filters = {
+        type: document.getElementById('profileMapFilterType')?.value || 'all',
+        startDate: document.getElementById('profileMapFilterStartDate')?.value || '',
+        endDate: document.getElementById('profileMapFilterEndDate')?.value || ''
+    };
 
+    const applyBtn = document.getElementById('applyProfileMapFiltersBtn');
     if (applyBtn) {
         applyBtn.disabled = true;
         applyBtn.innerHTML = '<i class="ti ti-loader"></i> Filtering...';
     }
 
     try {
-        const userSession = await localforage.getItem('user_session');
-        const activeUserId = userSession ? String(userSession.user_id || userSession.id || '') : '';
+        // Persist filter selection so the Home Community Map uses it too
+        await localforage.setItem('community_map_filters', filters);
 
-        let pins = [];
+        const pins = await fetchFilteredMapPins(filters);
 
-        if (filterType === 'mine') {
-            if (!activeUserId) {
-                alert('You must be logged in to view your reports.');
-                return;
-            }
-            // Fetch directly from history API so user ownership and created_at are guaranteed
-            const res = await fetch(`${API_BASE_URL}/api_get_history.php?user_id=${encodeURIComponent(activeUserId)}`, {
-                method: 'GET',
-                headers: { 'ngrok-skip-browser-warning': 'true' }
-            });
-            const data = await res.json();
-            if (data.status !== 'success') {
-                alert(data.message || 'Could not load your reports.');
-                return;
-            }
-            pins = data.data || [];
-        } else {
-            const res = await fetch(`${API_BASE_URL}/api_get_map_data.php`, {
-                method: 'GET',
-                headers: { 'ngrok-skip-browser-warning': 'true' }
-            });
-            const data = await res.json();
-            if (data.status !== 'success') {
-                alert(data.message || 'Could not load map reports.');
-                return;
-            }
-            pins = data.data || [];
+        // Update BOTH the modal map and the Home dashboard Community Map
+        renderPinsToMap(profileFilteredMap, profileFilteredLayer, pins, true);
+        if (communityMap && communityMarkersLayer) {
+            renderPinsToMap(communityMap, communityMarkersLayer, pins, false);
         }
 
-        // Strict date filtering (never bypasses pins when a date filter is set)
-        if (startDate) {
-            const startMs = new Date(startDate + 'T00:00:00').getTime();
-            pins = pins.filter(p => {
-                const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
-                return !Number.isNaN(reportMs) && reportMs >= startMs;
-            });
-        }
-
-        if (endDate) {
-            const endMs = new Date(endDate + 'T23:59:59.999').getTime();
-            pins = pins.filter(p => {
-                const reportMs = parseReportDateMs(p.created_at || p.timestamp || p.date_reported);
-                return !Number.isNaN(reportMs) && reportMs <= endMs;
-            });
-        }
-
-        if (profileFilteredLayer) profileFilteredLayer.clearLayers();
-
-        // Keep only pins with valid coordinates
-        pins = pins.filter(p => isFinite(parseFloat(p.latitude)) && isFinite(parseFloat(p.longitude)));
-
-        if (pins.length === 0) {
+        if (pins.length === 0 && !isSilentInit) {
             if (typeof showAlert === 'function') {
                 await showAlert('No reports matched your selected filter and date.', { type: 'info', title: 'No Matching Reports' });
             } else {
                 alert('No reports matched your selected filter and date.');
             }
-            return;
-        }
-
-        const redPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-red.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
-        const greenPin = new L.Icon({ iconUrl: 'https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-2x-green.png', shadowUrl: 'https://cdnjs.cloudflare.com/ajax/libs/leaflet/0.7.7/images/marker-shadow.png', iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34] });
-
-        const bounds = [];
-        pins.forEach(loc => {
-            const lat = parseFloat(loc.latitude);
-            const lng = parseFloat(loc.longitude);
-            bounds.push([lat, lng]);
-
-            const isPending = String(loc.status || '').toLowerCase() === 'pending';
-            const marker = L.marker([lat, lng], { icon: isPending ? redPin : greenPin }).addTo(profileFilteredLayer);
-            const imgUrl = loc.image_data || 'https://placehold.co/150x150/e0e0e0/a0a0a0?text=No+Photo';
-            const rawDate = loc.created_at || loc.timestamp || '';
-            const dateLabel = rawDate ? new Date(String(rawDate).replace(' ', 'T')).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '';
-
-            marker.bindPopup(`
-                <div style="text-align:center; min-width:150px;">
-                    <img src="${imgUrl}" style="width:100%; height:90px; object-fit:cover; border-radius:8px; margin-bottom:6px;">
-                    <div style="font-weight:bold; color:${isPending ? '#dc3545' : '#28a745'};">${isPending ? '🔴 Pending' : '✅ Cleaned'}</div>
-                    ${dateLabel ? `<div style="font-size:11px; color:#888; margin-top:2px;">${dateLabel}</div>` : ''}
-                    <div style="font-size:12px; text-align:left; color:#555; margin-top:4px;">${escapeHtml(loc.description || '')}</div>
-                </div>
-            `);
-        });
-
-        if (bounds.length > 0) {
-            profileFilteredMap.fitBounds(bounds, { padding: [30, 30], maxZoom: 16 });
         }
     } catch (error) {
         console.error("Profile filtered map error:", error);
-        alert('Could not filter map reports. Check your connection.');
+        if (!isSilentInit) alert(error.message || 'Could not filter map reports. Check your connection.');
     } finally {
         if (applyBtn) {
             applyBtn.disabled = false;
