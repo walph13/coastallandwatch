@@ -15,21 +15,61 @@ $json = file_get_contents('php://input');
 $data = json_decode($json, true);
 
 if ($data && (isset($data['user_id']) || isset($data['id']))) {
-    // Handle whether the mobile app sends 'user_id' or 'id'
-    $user_id = $conn->real_escape_string(isset($data['user_id']) ? $data['user_id'] : $data['id']);
-    
-    $full_name = $conn->real_escape_string($data['full_name']);
-    $username = $conn->real_escape_string($data['username']);
-    $phone = $conn->real_escape_string($data['phone_number']);
-    
-    // Match exact DB column names: date_of_birth and address_purok_sitio
-    $dob = $conn->real_escape_string($data['date_of_birth']);
-    $address = $conn->real_escape_string($data['address_purok_sitio']);
-    
+    $user_id   = $conn->real_escape_string(isset($data['user_id']) ? $data['user_id'] : $data['id']);
+    $full_name = trim($data['full_name'] ?? '');
+    $username  = trim($data['username'] ?? '');
+    $phone     = trim($data['phone_number'] ?? '');
+    $dob       = trim($data['date_of_birth'] ?? '');
+    $address   = trim($data['address_purok_sitio'] ?? '');
+    $raw_pass  = $data['password'] ?? '';
+
+    // 1. Block empty required fields
+    if ($full_name === '' || $username === '' || $phone === '' || $dob === '' || $address === '') {
+        echo json_encode([
+            "status" => "error",
+            "message" => "All profile fields (Full Name, Username, Phone Number, Date of Birth, and Address) are required."
+        ]);
+        exit();
+    }
+
+    // 2. Validate 11-digit Philippine mobile number
+    if (!preg_match('/^09\d{9}$/', $phone)) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "Please enter a valid 11-digit Philippine mobile number starting with 09."
+        ]);
+        exit();
+    }
+
+    // 3. Validate new password if provided
+    if ($raw_pass !== '' && (strlen($raw_pass) < 8 || !preg_match('/[a-zA-Z]/', $raw_pass) || !preg_match('/[0-9]/', $raw_pass))) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "New password must be at least 8 characters and contain both a letter and a number."
+        ]);
+        exit();
+    }
+
+    // 4. Prevent duplicate username from another account
+    $escaped_username = $conn->real_escape_string($username);
+    $dup_check = $conn->query("SELECT user_id FROM users WHERE username = '$escaped_username' AND user_id != '$user_id'");
+    if ($dup_check && $dup_check->num_rows > 0) {
+        echo json_encode([
+            "status" => "error",
+            "message" => "That username is already taken by another account."
+        ]);
+        exit();
+    }
+
+    $escaped_fullname = $conn->real_escape_string($full_name);
+    $escaped_phone    = $conn->real_escape_string($phone);
+    $escaped_dob      = $conn->real_escape_string($dob);
+    $escaped_address  = $conn->real_escape_string($address);
+
     // Check if user is also updating password
     $pass_sql = "";
-    if (!empty($data['password'])) {
-        $password = password_hash($data['password'], PASSWORD_DEFAULT);
+    if ($raw_pass !== '') {
+        $password = password_hash($raw_pass, PASSWORD_DEFAULT);
         $pass_sql = ", password = '$password'";
     }
 
@@ -48,19 +88,17 @@ if ($data && (isset($data['user_id']) || isset($data['id']))) {
         $pic_sql = ", profile_pic = '$file_name'";
     }
 
-    // 🚨 EXACT MAPPING TO YOUR TABLE STRUCTURE:
     $update_sql = "UPDATE users SET 
-                   full_name = '$full_name', 
-                   username = '$username', 
-                   phone_number = '$phone', 
-                   date_of_birth = '$dob', 
-                   address_purok_sitio = '$address' 
+                   full_name = '$escaped_fullname', 
+                   username = '$escaped_username', 
+                   phone_number = '$escaped_phone', 
+                   date_of_birth = '$escaped_dob', 
+                   address_purok_sitio = '$escaped_address' 
                    $pass_sql 
                    $pic_sql 
                    WHERE user_id = '$user_id'";
 
     if ($conn->query($update_sql)) {
-        // Fetch updated data using exact column names
         $res = $conn->query("SELECT user_id, user_id AS id, full_name, username, phone_number, date_of_birth, address_purok_sitio, profile_pic FROM users WHERE user_id = '$user_id'");
         $updated_user = $res->fetch_assoc();
         
