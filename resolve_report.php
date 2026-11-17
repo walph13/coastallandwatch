@@ -97,7 +97,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['mark_resolved'])) {
             if (!move_uploaded_file($f['tmp_name'], $dir . $file_name)) {
                 $error = 'The photo could not be saved on the server.';
             } else {
-                $stmt = $conn->prepare("UPDATE waste_reports SET status = 'Cleaned', after_photo_path = ? WHERE report_id = ? AND status <> 'Cleaned'");
+                // Save the date it was cleaned too (used by the dashboard chart) once the cleaned_at column exists
+                $col = $conn->query("SHOW COLUMNS FROM waste_reports LIKE 'cleaned_at'");
+                $has_cleaned_at = ($col && $col->num_rows > 0);
+                $stmt = $conn->prepare($has_cleaned_at
+                    ? "UPDATE waste_reports SET status = 'Cleaned', after_photo_path = ?, cleaned_at = NOW() WHERE report_id = ? AND status <> 'Cleaned'"
+                    : "UPDATE waste_reports SET status = 'Cleaned', after_photo_path = ? WHERE report_id = ? AND status <> 'Cleaned'");
                 $stmt->bind_param("si", $file_name, $report_id);
                 $ok = $stmt->execute() && $stmt->affected_rows === 1;
                 $stmt->close();
@@ -206,8 +211,24 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .content-area { padding: 32px; flex: 1; }
 
         /* ---------- Components shared with the dashboard ---------- */
-        .flat-card { background: var(--bg-surface); border: 1px solid #f3f4f6; border-radius: var(--radius-card); padding: 24px; margin-bottom: 24px; box-shadow: var(--shadow-sm); }
-        .card-title { font-size: 16px; font-weight: 600; color: var(--text-main); margin: 0 0 20px 0; display: flex; align-items: center; gap: 8px; }
+        .flat-card { 
+            background: var(--bg-surface); 
+            border: 1px solid #f3f4f6; 
+            border-radius: var(--radius-card); 
+            padding: 16px 20px; 
+            margin-bottom: 16px; 
+            box-shadow: var(--shadow-sm); 
+        }
+        
+        .card-title { 
+            margin: 0 0 10px 0; 
+            font-size: 16px; 
+            font-weight: 600; 
+            color: var(--text-main); 
+            display: flex; 
+            align-items: center; 
+            gap: 8px; 
+        }
         .card-title i { color: var(--primary-dark); font-size: 20px; }
 
         .flat-btn { background: var(--bg-surface); border: 1px solid var(--border-color); color: var(--text-main); padding: 10px 16px; border-radius: 8px; font-size: 14px; font-weight: 500; font-family: inherit; cursor: pointer; transition: 0.2s; display: inline-flex; align-items: center; justify-content: center; gap: 8px; text-decoration: none; }
@@ -215,7 +236,7 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .flat-btn.primary { background: var(--primary-strong); color: #fff; border-color: var(--primary-strong); }
         .flat-btn.primary:hover { background: var(--primary-strong-hover); border-color: var(--primary-strong-hover); }
         .flat-btn.primary:disabled { background: #9ca3af; border-color: #9ca3af; cursor: not-allowed; }
-        .flat-btn.block { width: 100%; padding: 14px; font-size: 15px; }
+        .flat-btn.block { width: 100%; padding: 12px; font-size: 15px; }
         .flat-btn.small { padding: 6px 12px; font-size: 13px; }
         .flat-btn.outline-blue { color: var(--avatar-text-dark); border-color: #bae6fd; background: var(--primary-light); }
         .flat-btn.outline-blue:hover { background: #bae6fd; }
@@ -229,8 +250,8 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .notice.success { background: var(--primary-light); border: 1px solid var(--primary); color: #075985; }
         .notice.error { background: #fef2f2; border: 1px solid #fecaca; color: #b91c1c; }
 
-        .form-label { display: flex; align-items: center; gap: 6px; font-size: 14px; font-weight: 500; margin-bottom: 8px; color: var(--text-main); }
-        .form-label i { color: var(--primary-dark); font-size: 16px; }
+        .form-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text-main); }
+        .form-label i { color: var(--primary-dark); font-size: 15px; }
 
         .map-pin-wrap { background: transparent; border: 0; }
         .map-pin { display: block; width: 20px; height: 20px; border-radius: 50%; border: 3px solid #fff; box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35); }
@@ -245,10 +266,12 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .page-header h1 { margin: 0 0 6px 0; font-size: 28px; font-weight: 700; letter-spacing: -0.5px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
         .page-header p { margin: 0; font-size: 14px; color: var(--text-muted); }
 
-        .resolve-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 24px; align-items: start; }
+        .resolve-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 24px; align-items: stretch; }
+        .resolve-grid > div > .flat-card:first-child,
+        .resolve-grid > section:first-child { margin-top: 0; }
 
         /* ---------- Photos ---------- */
-        .photo-frame { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border-color); background: var(--bg-body); margin-bottom: 20px; aspect-ratio: 16 / 10; }
+        .photo-frame { position: relative; border-radius: 10px; overflow: hidden; border: 1px solid var(--border-color); background: var(--bg-body); margin-bottom: 12px; aspect-ratio: 16 / 10; }
         .photo-frame img { width: 100%; height: 100%; object-fit: cover; display: block; }
         .photo-fallback { position: absolute; inset: 0; display: none; flex-direction: column; align-items: center; justify-content: center; gap: 8px; color: var(--text-muted); font-size: 13px; }
         .photo-fallback i { font-size: 32px; }
@@ -256,8 +279,9 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .photo-open:hover { background: rgba(31, 41, 55, 0.95); }
 
         .detail-list { margin: 0; display: grid; gap: 0; }
-        .detail-row { display: grid; grid-template-columns: 130px 1fr; gap: 12px; padding: 12px 0; border-top: 1px solid var(--bg-body); align-items: start; }
+        .detail-row { display: grid; grid-template-columns: 110px 1fr; gap: 8px; padding: 8px 0; border-top: 1px solid var(--bg-body); align-items: start; }
         .detail-row:first-child { border-top: 0; padding-top: 0; }
+        .detail-row:last-child { padding-bottom: 0; }
         .detail-row dt { color: var(--text-muted); font-weight: 500; font-size: 13px; }
         .detail-row dd { margin: 0; color: var(--text-main); font-weight: 500; overflow-wrap: anywhere; }
 
@@ -266,32 +290,34 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         .dropzone { border: 2px dashed #bae6fd; background: #f0f9ff; border-radius: 10px; transition: 0.2s; }
         .dropzone.dragover, .dropzone:focus-within { border-color: var(--primary); background: var(--primary-light); }
         .dropzone.has-error { border-color: #fca5a5; background: #fef2f2; }
-        .dz-empty { display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 32px 16px; text-align: center; cursor: pointer; }
-        .dz-empty i { font-size: 36px; color: var(--primary-dark); }
-        .dz-empty strong { font-size: 14px; color: var(--text-main); }
-        .dz-empty span { font-size: 13px; color: var(--text-muted); }
-        .dz-empty small { margin-top: 6px; font-size: 12px; color: var(--text-muted); }
+        .dz-empty { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 18px 12px; text-align: center; cursor: pointer; }
+        .dz-empty i { font-size: 30px; color: var(--primary-dark); }
+        .dz-empty strong { font-size: 13px; color: var(--text-main); }
+        .dz-empty span { font-size: 12px; color: var(--text-muted); }
+        .dz-empty small { margin-top: 4px; font-size: 11px; color: var(--text-muted); }
         .dz-empty[hidden] { display: none; }
-        .dz-preview { display: flex; gap: 16px; align-items: center; padding: 16px; }
+        .dz-preview { display: flex; gap: 16px; align-items: center; padding: 12px; }
         .dz-preview[hidden] { display: none; }
-        .dz-preview img { width: 120px; height: 90px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-color); flex-shrink: 0; }
+        .dz-preview img { width: 100px; height: 75px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border-color); flex-shrink: 0; }
         .dz-meta { min-width: 0; display: flex; flex-direction: column; gap: 4px; flex: 1; }
         .dz-meta .name { font-weight: 600; overflow-wrap: anywhere; }
         .dz-meta .size { font-size: 12px; color: var(--text-muted); }
         .field-error { margin: 10px 0 0; font-size: 13px; font-weight: 500; color: #b91c1c; }
         .field-error[hidden] { display: none; }
 
-        .next-steps { margin: 20px 0 0; padding: 16px; background: var(--bg-body); border-radius: 8px; font-size: 13px; color: var(--text-muted); }
-        .next-steps strong { display: block; color: var(--text-main); margin-bottom: 6px; font-size: 13px; }
-        .next-steps ul { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
-
-        #miniMap { height: 220px; border-radius: 10px; border: 1px solid var(--border-color); z-index: 1; margin-bottom: 16px; }
-        .coords { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; font-variant-numeric: tabular-nums; }
-
-        .compare { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-        .compare .photo-frame { margin-bottom: 8px; }
-        .compare figcaption { font-size: 12px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-        .compare figure { margin: 0; }
+        #miniMap { 
+            height: 160px; 
+            margin-bottom: 8px; 
+            border-radius: 10px; 
+            border: 1px solid var(--border-color); 
+            z-index: 1; 
+        }
+        .coords { 
+            margin-bottom: 6px; 
+            font-size: 12px; 
+            color: var(--text-muted); 
+            font-variant-numeric: tabular-nums;
+        }
 
         @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 
@@ -314,7 +340,6 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
         @media (max-width: 560px) {
             .live-datetime { display: none; }
             .detail-row { grid-template-columns: 1fr; gap: 4px; }
-            .compare { grid-template-columns: 1fr; }
             .dz-preview { flex-direction: column; align-items: flex-start; }
             .dz-preview img { width: 100%; height: 160px; }
         }
@@ -436,15 +461,15 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
                 </section>
 
                 <!-- RIGHT: ACTION + LOCATION -->
-                <div>
-                    <section class="flat-card" aria-labelledby="actionTitle">
+                <div style="display: flex; flex-direction: column; gap: 16px; height: 100%;">
+                    <section class="flat-card" aria-labelledby="actionTitle" style="margin-bottom: 0;">
                         <?php if ($is_cleaned): ?>
                             <h2 class="card-title" id="actionTitle"><i class="ti ti-circle-check"></i> Cleanup Completed</h2>
-                            <div class="notice success" role="status" style="margin-bottom: 20px;"><i class="ti ti-circle-check"></i> This report has already been marked as Cleaned.</div>
+                            <div class="notice success" role="status" style="margin-bottom: 12px;"><i class="ti ti-circle-check"></i> This report has already been marked as Cleaned.</div>
 
                             <?php if ($after_photo !== ''): ?>
-                                <figure style="margin: 0 0 20px 0;">
-                                    <div class="photo-frame" style="margin-bottom: 8px;">
+                                <figure style="margin: 0 0 12px 0;">
+                                    <div class="photo-frame" style="margin-bottom: 6px;">
                                         <img src="uploads/reports/<?php echo h($after_photo); ?>" alt="Photo of the cleaned area" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
                                         <div class="photo-fallback"><i class="ti ti-photo-off"></i> Image not found</div>
                                         <a class="photo-open" href="uploads/reports/<?php echo h($after_photo); ?>" target="_blank" rel="noopener"><i class="ti ti-arrows-maximize"></i> Open full size</a>
@@ -456,8 +481,8 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
 
                         <?php else: ?>
                             <h2 class="card-title" id="actionTitle"><i class="ti ti-checkup-list"></i> Mark as Cleaned</h2>
-                            <p style="margin: 0 0 20px 0; color: var(--text-muted); line-height: 1.6;">
-                                Upload a photo showing the area has been cleaned by barangay personnel. It is saved as the <strong>"After"</strong> photo.
+                            <p style="margin: 0 0 12px 0; color: var(--text-muted); font-size: 13px; line-height: 1.5;">
+                                Upload a photo showing the area has been cleaned. It is saved as the <strong>"After"</strong> photo.
                             </p>
 
                             <form method="POST" action="resolve_report.php?id=<?php echo (int)$report_id; ?>" enctype="multipart/form-data" id="resolveForm" novalidate>
@@ -485,24 +510,15 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
                                 </div>
                                 <p class="field-error" id="photoError" role="alert" hidden></p>
 
-                                <button type="submit" class="flat-btn primary block" id="submitBtn" style="margin-top: 20px;" disabled>
+                                <button type="submit" class="flat-btn primary block" id="submitBtn" style="margin-top: 14px;" disabled>
                                     <i class="ti ti-check"></i> Mark as Cleaned
                                 </button>
                             </form>
-
-                            <div class="next-steps">
-                                <strong>What happens next</strong>
-                                <ul>
-                                    <li>The report status changes to Cleaned.</li>
-                                    <li>The After photo appears in the Waste Reports table.</li>
-                                    <li>Its pin on the dashboard map turns blue.</li>
-                                </ul>
-                            </div>
                         <?php endif; ?>
                     </section>
 
                     <?php if ($has_location): ?>
-                    <section class="flat-card" aria-labelledby="locTitle">
+                    <section class="flat-card" aria-labelledby="locTitle" style="margin-bottom: 0;">
                         <h2 class="card-title" id="locTitle"><i class="ti ti-map-pin"></i> Location</h2>
                         <div id="miniMap" role="img" aria-label="Map showing where the report was made"></div>
                         <div class="coords"><?php echo h(number_format($lat, 6)); ?>, <?php echo h(number_format($lng, 6)); ?></div>
@@ -627,15 +643,21 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
 
     <?php if ($has_location): ?>
     // ---------- Mini map (pin colours match the dashboard map) ----------
+    // ---------- Mini map (pin colours match the dashboard map) ----------
     window.addEventListener('load', function () {
         const lat = <?php echo json_encode($lat); ?>;
         const lng = <?php echo json_encode($lng); ?>;
         const isCleaned = <?php echo $is_cleaned ? 'true' : 'false'; ?>;
         const map = L.map('miniMap', { scrollWheelZoom: false }).setView([lat, lng], 17);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        
+        // Use Google Hybrid Tiles
+        L.tileLayer('https://{s}.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', {
+            maxZoom: 20,
+            subdomains: ['mt0', 'mt1', 'mt2', 'mt3'],
+            attribution: '&copy; Google Maps'
         }).addTo(map);
+
+        // Keep the existing pin logic
         L.marker([lat, lng], {
             icon: L.divIcon({
                 className: 'map-pin-wrap',
@@ -650,4 +672,4 @@ $date_reported = !empty($report['created_at']) ? date("M d, Y h:i A", strtotime(
 </script>
 
 </body>
-</html>
+</html> 
